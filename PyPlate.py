@@ -1,4 +1,5 @@
 from enum import Enum
+import numpy as np
 
 class ReagentType(Enum):
     SOLID = 1
@@ -7,10 +8,25 @@ class ReagentType(Enum):
 class Reagent(object):
     # MW in g/mol, density in g/mL
     def __init__(self, name, molecular_weight, reagent_type, density):
+        if not isinstance(name, str) or len(name) == 0:
+            raise ValueError("invalid reagent name")
         self.name = name
-        self.molecular_weight = molecular_weight
+        if not isinstance(molecular_weight, (int,float)) or molecular_weight <= 0.0:
+            raise ValueError("invalid molecular weight")
+        self.molecular_weight = float(molecular_weight)
+        if reagent_type is None:
+            raise ValueError("invalid reagent type")
         self.reagent_type = reagent_type
-        self.density = density
+        if reagent_type == ReagentType.LIQUID:
+            if (not isinstance(density, (int,float))) or density <= 0.0:
+                raise ValueError("invalid density")
+            self.density = float(density)
+        elif reagent_type == ReagentType.SOLID:
+            if density is not None:
+                raise ValueError("cannot have density for solid reagents")
+            self.density = None
+        else:
+            raise ValueError("unknown reagent type")
 
     def __str__(self):
         if self.reagent_type == ReagentType.SOLID:
@@ -30,10 +46,18 @@ class StockSolution(object):
     # concentration in mol/L
     # volume in mL
     def __init__(self, reagent, concentration, solvent, volume):
+        if not isinstance(reagent, Reagent):
+            raise ValueError("invalid reagent")
         self.reagent = reagent
-        self.concentration = concentration
+        if not isinstance(concentration, (int,float)) or concentration <= 0.0:
+            raise ValueError("invalid concentration")
+        self.concentration = float(concentration)
+        if not isinstance(solvent, Reagent):
+            raise ValueError("invalid solvent, must be Reagent")
         self.solvent = solvent
-        self.volume = volume
+        if not isinstance(volume, (int,float)) or volume <= 0.0:
+            raise ValueError("invalid volume")
+        self.volume = float(volume)
 
     # return a string containing a recipe for this stock solution
     # volume in mL
@@ -70,7 +94,12 @@ class Plate(object):
     # columns: number of columns or list of names of columns
     # max_volume_per_well: maximum volume of each well in uL
     def __init__(self, name, make, rows, columns, max_volume_per_well):
+        if not isinstance(name, str) or len(name) == 0:
+            raise ValueError("invalid plate name")
         self.name = name
+
+        if not isinstance(make, str) or len(make) == 0:
+            raise ValueError("invalid plate make")
         self.make = make
 
         if isinstance(rows, int):
@@ -107,8 +136,13 @@ class Plate(object):
         else:
             raise ValueError("columns must be int or list")
 
+        self.reagents = []                                   # labels the reagents in self.moles
+        self.volumes = np.zeros((self.rows,self.columns))    # in uL
+        self.moles = None                                    # in moles, shape:(reagent, rows, columns)
+        self.instructions = []                               # list of instructions for making this plate
+
     def __str__(self):
-        return f"{self.name} ({self.make}, {self.rows}x{self.columns}, max {self.max_volume_per_well:.3f} uL/well)"
+        return f"{self.name} ({self.make}, {self.rows}x{self.columns}, max {self.max_volume_per_well:.0f} uL/well)"
 
 # represents a 96 well plate
 class Generic96WellPlate(Plate):
