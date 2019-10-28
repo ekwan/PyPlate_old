@@ -1,6 +1,13 @@
 from enum import Enum
-import numpy as np
 from string import ascii_uppercase
+import os
+
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from matplotlib import cm
+
+import numpy as np
+import xlsxwriter
 
 # constants
 UPPERCASE_LETTERS = list(ascii_uppercase)
@@ -260,14 +267,141 @@ class Plate(object):
         extra_moles = volume * stock_solution.concentration
         self.moles[reagent_index,:,column] += extra_moles
 
+    # converts a location tuple into a canonical form:
+    # (row, column) (both zero-indexed)
+    def location_tuple_to_index_form(self, location):
+        if not isinstance(location, tuple):
+            raise ValueError("location must be a tuple")
+        if not len(location) == 2:
+            raise ValueError("locations must be tuples of length 2")
+
+        row, column = location
+
+        # convert row to row index
+        if isinstance(row, str):
+            if row not in self.row_names:
+                raise ValueError(f"row name {row} not found for {str(location)}")
+            row = self.row_names.index(row)
+        elif isinstance(row, int):
+            if row < 1 or row > self.n_rows:
+                raise ValueError("row {row} out of range for {str(location)}")
+            row = row - 1
+        else:
+            raise ValueError(f"error parsing {str(location)}: must specify row as 1-indexed number or row name")
+
+        # convert column to column index
+        if isinstance(column, str):
+            if column not in self.column_names:
+                raise ValueError(f"column name {column} not found for {str(location)}")
+            column = self.column_names.index(column)
+        elif isinstance(column, int):
+            if column < 1 or column > self.n_columns:
+                raise ValueError("column {column} out of range for {str(location)}")
+            column = column - 1
+        else:
+            raise ValueError(f"error parsing {str(location)}: must specify column as 1-indexed number or column name")
+
+        result = (row,column)
+        return result
+
+    # add specified volume of stock to specified wells
+    # volume: in uL
+    # stock_solution: which stock to add
+    # destinations: (row,column) or [ (row,column) ], can specify 1-indexed locations or row/column names like "A:1"
+    def add_stock_to_wells(self, volume, stock_solution, destinations):
+        if (not isinstance(volume, (int,float))) or volume <= 0.0:
+            raise ValueError("invalid volume")
+        if not isinstance(stock_solution, StockSolution):
+            raise ValueError(f"expected a StockSolution, but got a {str(type(stock_solution))}")
+
+        # construct list of destinations: [ (row, column) ] with 0-indexing
+        new_destinations = []
+        if isinstance(destinations, (tuple, str)):
+            destinations = [ destinations ]
+        if isinstance(destinations, list):
+            for destination in destinations:
+                if isinstance(destination, str):
+                    fields = destination.split(":")
+                    if len(fields) != 2:
+                        raise ValueError(f"invalid location string {destination}")
+                    destination = tuple(fields)
+                if isinstance(destination, tuple):
+                    destination = self.location_tuple_to_index_form(destination)
+                else:
+                    raise ValueError(f"unrecognized location tuple {str(destination)}")
+                new_destinations.append(destination)
+        else:
+            raise ValueError("destinations must be a single tuple or list of tuples")
+
+        # record this addition as an Instruction
+        instruction = Instruction(volume, stock_solution, new_destinations, self, destination_type="misc")
+        self.instructions.append(instruction)
+        print(instruction)
+
+        # update the volumes
+        for row,column in new_destinations:
+            self.volumes[row,column] += volume
+
+        # warn if we have exceeded volumes
+        current_max_volume = np.max(self.volumes)
+        if np.max(self.volumes) > self.max_volume_per_well:
+            print(f"Warning: exceeded maximum well volume!  (Now {current_max_volume:.0f} uL, but limit is {self.max_volume_per_well:.0f} ul).")
+
+        # determine if we have added this reagent already
+        reagent = stock_solution.reagent
+        reagent_index = -1
+        if reagent not in self.reagents:
+            self.reagents.append(reagent)
+            reagent_index = len(self.reagents)-1
+            blank_array = np.zeros((1, self.n_rows, self.n_columns))
+            if len(self.reagents) == 1:
+                # this is the first reagent
+                self.moles = blank_array
+            else:
+                # this is the n-th reagent
+                self.moles = np.concatenate((self.moles, blank_array), axis=0)
+        else:
+            reagent_index = self.reagents.index(reagent)
+
+        # update the moles
+        extra_moles = volume * stock_solution.concentration
+        for row,column in new_destinations:
+            self.moles[reagent_index,row,column] += extra_moles
+
     # create an Excel spreadsheet summarizing this plate
-    def to_excel(self, filename, colormap='viridis'):
-        # instructions
+    def to_excel(self, filename, colormap='plasma', do_not_overwrite=False):
+        # delete file if it exists
+        print(f"Writing plate to {filename}...", end='')
+        if os.path.exists(filename):
+            if do_not_overwrite:
+                raise ValueError(f"Error: {filename} already exists.")
+            else:
+                os.remove(filename)
+
+        # create file
+        workbook = xlsxwriter.Workbook(filename)
 
         # total volumes
+        volumes_worksheet = workbook.add_worksheet(self.name)
+        volumes_worksheet.write(0,0,"Volumes (uL)")
+        for i,column_name in enumerate(self.column_names):
+            volumes_worksheet.write(0,i+1,column_name)
+        for i,row_name in enumerate(self.row_names):
+            volumes_worksheet.write(i+1,0,row_name)
+        for row in range(self.n_rows):
+            for column in range(self.n_columns):
+                volumes_worksheet.write(row+1,column+1,self.volumes[row,column])
+
+	# instructions
+
+	# reagents
+
 
         # reagent concentrations
-        pass
+
+        # update status
+        workbook.close()
+        print("done.")
 
 # represents an addition of a StockSolution to a Plate
 class Instruction(object):
@@ -279,15 +413,15 @@ class Instruction(object):
         self.volume = volume
         self.stock_solution = stock_solution
         self.destinations = destinations
+        stock_name = stock_solution.reagent.name
+        stock_concentration = stock_solution.concentration * 1000.0
+        stock_solvent = stock_solution.solvent.name
 
         # generate string that explains how to perform this addition in words
         # no checking is done to see if destinations and destination_type are consistent
         if destination_type == "row":
             row_index = destinations[0][0]
             row_name = plate.row_names[row_index]
-            stock_name = stock_solution.reagent.name
-            stock_concentration = stock_solution.concentration * 1000.0
-            stock_solvent = stock_solution.solvent.name
             if row_name == str(row_index+1):
                 instruction_string = f"Add {volume} uL of {stock_name} ({stock_concentration} mM in {stock_solvent}) to row {row_name}."
             else:
@@ -295,15 +429,22 @@ class Instruction(object):
         elif destination_type == "column":
             column_index = destinations[0][1]
             column_name = plate.column_names[column_index]
-            stock_name = stock_solution.reagent.name
-            stock_concentration = stock_solution.concentration * 1000.0
-            stock_solvent = stock_solution.solvent.name
             if column_name == str(column_index+1):
                 instruction_string = f"Add {volume} uL of {stock_name} ({stock_concentration} mM in {stock_solvent}) to column {column_name}."
             else:
                 instruction_string = f"Add {volume} uL of {stock_name} ({stock_concentration} mM in {stock_solvent}) to column {column_name} (column number {column_index+1})."
         elif destination_type == "misc":
-            pass
+            instruction_string = f"Add {volume} uL of {stock_name} ({stock_concentration} mM in {stock_solvent}) to:\n   "
+            count = 0
+            for i,(row,column) in enumerate(destinations):
+                row_name = plate.row_names[row]
+                column_name = plate.column_names[column]
+                well = f"{row_name}{column_name}"
+                instruction_string += f"{well:6s} "
+                count += 1
+                if count > 20 and i != len(destinations)-1:
+                    count = 0
+                    instruction_string += "\n   "
         else:
             raise ValueError("unknown destination type")
         self.instruction_string = instruction_string
@@ -351,14 +492,22 @@ print()
 
 plate = Generic96WellPlate("test plate", 500.0)
 print(plate)
-plate.add_stock_to_column(volume=15.0, stock_solution=triethylamine_10mM, column="2")
+plate.add_stock_to_wells(volume=10.0, stock_solution=triethylamine_10mM, destinations=["A:1","B:2"])
+print("moles")
 print(plate.moles[0])
-plate.add_stock_to_row(volume=25.0, stock_solution=sodium_sulfate_halfM, row="A")
-print(plate.moles[0])
-print(plate.moles[1])
-plate.add_stock_to_row(volume=25.0, stock_solution=sodium_sulfate_halfM, row=1)
-print(plate.moles[0])
-print(plate.moles[1])
-print()
+
+#plate.add_stock_to_column(volume=15.0, stock_solution=triethylamine_10mM, column="2")
+#print(plate.moles[0])
+#plate.add_stock_to_row(volume=25.0, stock_solution=sodium_sulfate_halfM, row="A")
+#print(plate.moles[0])
+#print(plate.moles[1])
+#plate.add_stock_to_row(volume=25.0, stock_solution=sodium_sulfate_halfM, row=1)
+#print(plate.moles[0])
+#print(plate.moles[1])
+#print()
+
+
 print("volumes")
 print(plate.volumes)
+
+plate.to_excel("plate.xlsx")
