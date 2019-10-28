@@ -1,5 +1,9 @@
 from enum import Enum
 import numpy as np
+from string import ascii_uppercase
+
+# constants
+UPPERCASE_LETTERS = list(ascii_uppercase)
 
 class ReagentType(Enum):
     SOLID = 1
@@ -105,7 +109,7 @@ class Plate(object):
         if isinstance(rows, int):
             if rows < 1:
                 raise ValueError("illegal number of rows")
-            self.rows = rows
+            self.n_rows = rows
             self.row_names = [ f"{i+1}" for i in range(rows) ]
         elif isinstance(rows, list):
             if len(rows) == 0:
@@ -115,7 +119,7 @@ class Plate(object):
                     raise ValueError("row names must be strings")
             if len(rows) != len(set(rows)):
                 raise ValueError("duplicate row names found")
-            self.rows = len(rows)
+            self.n_rows = len(rows)
             self.row_names = rows
         else:
             raise ValueError("rows must be int or list")
@@ -125,7 +129,7 @@ class Plate(object):
         if isinstance(columns, int):
             if columns < 1:
                 raise ValueError("illegal number of columns")
-            self.columns = columns
+            self.n_columns = columns
             self.column_names = [ f"{i+1}" for i in range(columns) ]
         elif isinstance(columns, list):
             if len(columns) == 0:
@@ -135,18 +139,18 @@ class Plate(object):
                     raise ValueError("row names must be strings")
             if len(columns) != len(set(columns)):
                 raise ValueError("duplicate column names found")
-            self.columns = len(columns)
+            self.n_columns = len(columns)
             self.column_names = columns
         else:
             raise ValueError("columns must be int or list")
 
-        self.reagents = []                                   # labels the reagents in self.moles
-        self.volumes = np.zeros((self.rows,self.columns))    # in uL
-        self.moles = None                                    # in moles, shape:(reagent, rows, columns)
-        self.instructions = []                               # list of instructions for making this plate
+        self.reagents = []                                       # labels the reagents in self.moles
+        self.volumes = np.zeros((self.n_rows,self.n_columns))    # in uL
+        self.moles = None                                        # in micromoles, shape:(reagent, rows, columns)
+        self.instructions = []                                   # list of instructions for making this plate
 
     def __str__(self):
-        return f"{self.name} ({self.make}, {self.rows}x{self.columns}, max {self.max_volume_per_well:.0f} uL/well)"
+        return f"{self.name} ({self.make}, {self.n_rows}x{self.n_columns}, max {self.max_volume_per_well:.0f} uL/well)"
 
     # add specified volume of stock to one row
     # volume: in uL
@@ -162,15 +166,15 @@ class Plate(object):
                 raise ValueError(f"row name {row} not found")
             row = self.row_names.index(row)
         elif isinstance(row, int):
-            if row < 1 or row > self.rows:
+            if row < 1 or row > self.n_rows:
                 raise ValueError("row out of range")
             row = row - 1
         else:
             raise ValueError("must specify row as 1-indexed number or row name")
 
         # record this addition as an Instruction
-        destinations = [ (row,column) for column in range(self.columns) ]
-        instruction = Instruction(volume, stock_solution, destinations, self, destination_type="whole row")
+        destinations = [ (row,column) for column in range(self.n_columns) ]
+        instruction = Instruction(volume, stock_solution, destinations, self, destination_type="row")
         self.instructions.append(instruction)
         print(instruction)
 
@@ -188,19 +192,73 @@ class Plate(object):
         if reagent not in self.reagents:
             self.reagents.append(reagent)
             reagent_index = len(self.reagents)-1
+            blank_array = np.zeros((1, self.n_rows, self.n_columns))
             if len(self.reagents) == 1:
                 # this is the first reagent
-                self.moles = np.zeros((1,self.rows,self.columns))
+                self.moles = blank_array
             else:
                 # this is the n-th reagent
-                blank_array = np.zeros((self.rows, self.columns))
                 self.moles = np.concatenate((self.moles, blank_array), axis=0)
         else:
             reagent_index = self.reagents.index(reagent)
 
         # update the moles
-        extra_moles = volume * stock_solution.concentration / 1E6
+        extra_moles = volume * stock_solution.concentration
         self.moles[reagent_index,row,:] += extra_moles
+
+    # add specified volume of stock to one column
+    # volume: in uL
+    # stock_solution: which stock to add
+    # column: column name or column index (1-indexed)
+    def add_stock_to_column(self, volume, stock_solution, column):
+        if (not isinstance(volume, (int,float))) or volume <= 0.0:
+            raise ValueError("invalid volume")
+        if not isinstance(stock_solution, StockSolution):
+            raise ValueError(f"expected a StockSolution, but got a {str(type(stock_solution))}")
+        if isinstance(column, str):
+            if column not in self.column_names:
+                raise ValueError(f"column name {column} not found")
+            column = self.column_names.index(column)
+        elif isinstance(column, int):
+            if column < 1 or column > self.n_columns:
+                raise ValueError("column out of range")
+            column = column - 1
+        else:
+            raise ValueError("must specify column as 1-indexed number or column name")
+
+        # record this addition as an Instruction
+        destinations = [ (row,column) for row in range(self.n_rows) ]
+        instruction = Instruction(volume, stock_solution, destinations, self, destination_type="column")
+        self.instructions.append(instruction)
+        print(instruction)
+
+        # update the volumes
+        self.volumes[:,column] += volume
+
+        # warn if we have exceeded volumes
+        current_max_volume = np.max(self.volumes)
+        if np.max(self.volumes) > self.max_volume_per_well:
+            print(f"Warning: exceeded maximum well volume!  (Now {current_max_volume:.0f} uL, but limit is {self.max_volume_per_well:.0f} ul).")
+
+        # determine if we have added this reagent already
+        reagent = stock_solution.reagent
+        reagent_index = -1
+        if reagent not in self.reagents:
+            self.reagents.append(reagent)
+            reagent_index = len(self.reagents)-1
+            blank_array = np.zeros((1, self.n_rows, self.n_columns))
+            if len(self.reagents) == 1:
+                # this is the first reagent
+                self.moles = blank_array
+            else:
+                # this is the n-th reagent
+                self.moles = np.concatenate((self.moles, blank_array), axis=0)
+        else:
+            reagent_index = self.reagents.index(reagent)
+
+        # update the moles
+        extra_moles = volume * stock_solution.concentration
+        self.moles[reagent_index,:,column] += extra_moles
 
     # create an Excel spreadsheet summarizing this plate
     def to_excel(self, filename, colormap='viridis'):
@@ -224,12 +282,26 @@ class Instruction(object):
 
         # generate string that explains how to perform this addition in words
         # no checking is done to see if destinations and destination_type are consistent
-        if destination_type == "whole row":
+        if destination_type == "row":
             row_index = destinations[0][0]
             row_name = plate.row_names[row_index]
-            instruction_string = f"Add {volume} uL to row {row_name} (row number {row_index+1})."
-        elif destination_type == "whole column":
-            pass
+            stock_name = stock_solution.reagent.name
+            stock_concentration = stock_solution.concentration * 1000.0
+            stock_solvent = stock_solution.solvent.name
+            if row_name == str(row_index+1):
+                instruction_string = f"Add {volume} uL of {stock_name} ({stock_concentration} mM in {stock_solvent}) to row {row_name}."
+            else:
+                instruction_string = f"Add {volume} uL of {stock_name} ({stock_concentration} mM in {stock_solvent}) to row {row_name} (row number {row_index+1})."
+        elif destination_type == "column":
+            column_index = destinations[0][1]
+            column_name = plate.column_names[column_index]
+            stock_name = stock_solution.reagent.name
+            stock_concentration = stock_solution.concentration * 1000.0
+            stock_solvent = stock_solution.solvent.name
+            if column_name == str(column_index+1):
+                instruction_string = f"Add {volume} uL of {stock_name} ({stock_concentration} mM in {stock_solvent}) to column {column_name}."
+            else:
+                instruction_string = f"Add {volume} uL of {stock_name} ({stock_concentration} mM in {stock_solvent}) to column {column_name} (column number {column_index+1})."
         elif destination_type == "misc":
             pass
         else:
@@ -243,11 +315,17 @@ class Instruction(object):
 class Generic96WellPlate(Plate):
     def __init__(self, name, max_volume_per_well):
         make = "generic 96 well plate"
-        rows = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        rows = UPPERCASE_LETTERS[:8]
         columns = 12
         super().__init__(name, make, rows, columns, max_volume_per_well)
 
-
+# represents a 384 well plate
+class Generic384WellPlate(Plate):
+    def __init__(self, name, max_volume_per_well):
+        make = "generic 384 well plate"
+        rows = UPPERCASE_LETTERS[:16]
+        columns = 24
+        super().__init__(name, make, rows, columns, max_volume_per_well)
 
 ### testing ###
 
@@ -273,4 +351,14 @@ print()
 
 plate = Generic96WellPlate("test plate", 500.0)
 print(plate)
-plate.add_stock_to_row(volume=10.0, stock_solution=triethylamine_10mM, row=1)
+plate.add_stock_to_column(volume=15.0, stock_solution=triethylamine_10mM, column="2")
+print(plate.moles[0])
+plate.add_stock_to_row(volume=25.0, stock_solution=sodium_sulfate_halfM, row="A")
+print(plate.moles[0])
+print(plate.moles[1])
+plate.add_stock_to_row(volume=25.0, stock_solution=sodium_sulfate_halfM, row=1)
+print(plate.moles[0])
+print(plate.moles[1])
+print()
+print("volumes")
+print(plate.volumes)
