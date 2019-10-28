@@ -113,6 +113,8 @@ class Plate(object):
             for row in rows:
                 if not isinstance(row, str):
                     raise ValueError("row names must be strings")
+            if len(rows) != len(set(rows)):
+                raise ValueError("duplicate row names found")
             self.rows = len(rows)
             self.row_names = rows
         else:
@@ -131,6 +133,8 @@ class Plate(object):
             for column in columns:
                 if not isinstance(column, str):
                     raise ValueError("row names must be strings")
+            if len(columns) != len(set(columns)):
+                raise ValueError("duplicate column names found")
             self.columns = len(columns)
             self.column_names = columns
         else:
@@ -144,6 +148,97 @@ class Plate(object):
     def __str__(self):
         return f"{self.name} ({self.make}, {self.rows}x{self.columns}, max {self.max_volume_per_well:.0f} uL/well)"
 
+    # add specified volume of stock to one row
+    # volume: in uL
+    # stock_solution: which stock to add
+    # row: row name or row index (1-indexed)
+    def add_stock_to_row(self, volume, stock_solution, row):
+        if (not isinstance(volume, (int,float))) or volume <= 0.0:
+            raise ValueError("invalid volume")
+        if not isinstance(stock_solution, StockSolution):
+            raise ValueError(f"expected a StockSolution, but got a {str(type(stock_solution))}")
+        if isinstance(row, str):
+            if row not in self.row_names:
+                raise ValueError(f"row name {row} not found")
+            row = self.row_names.index(row)
+        elif isinstance(row, int):
+            if row < 1 or row > self.rows:
+                raise ValueError("row out of range")
+            row = row - 1
+        else:
+            raise ValueError("must specify row as 1-indexed number or row name")
+
+        # record this addition as an Instruction
+        destinations = [ (row,column) for column in range(self.columns) ]
+        instruction = Instruction(volume, stock_solution, destinations, self, destination_type="whole row")
+        self.instructions.append(instruction)
+        print(instruction)
+
+        # update the volumes
+        self.volumes[row,:] += volume
+
+        # warn if we have exceeded volumes
+        current_max_volume = np.max(self.volumes)
+        if np.max(self.volumes) > self.max_volume_per_well:
+            print(f"Warning: exceeded maximum well volume!  (Now {current_max_volume:.0f} uL, but limit is {self.max_volume_per_well:.0f} ul).")
+
+        # determine if we have added this reagent already
+        reagent = stock_solution.reagent
+        reagent_index = -1
+        if reagent not in self.reagents:
+            self.reagents.append(reagent)
+            reagent_index = len(self.reagents)-1
+            if len(self.reagents) == 1:
+                # this is the first reagent
+                self.moles = np.zeros((1,self.rows,self.columns))
+            else:
+                # this is the n-th reagent
+                blank_array = np.zeros((self.rows, self.columns))
+                self.moles = np.concatenate((self.moles, blank_array), axis=0)
+        else:
+            reagent_index = self.reagents.index(reagent)
+
+        # update the moles
+        extra_moles = volume * stock_solution.concentration / 1E6
+        self.moles[reagent_index,row,:] += extra_moles
+
+    # create an Excel spreadsheet summarizing this plate
+    def to_excel(self, filename, colormap='viridis'):
+        # instructions
+
+        # total volumes
+
+        # reagent concentrations
+        pass
+
+# represents an addition of a StockSolution to a Plate
+class Instruction(object):
+    # volume: in uL
+    # stock_solution: StockSolution
+    # destinations: list of 0-indexed (row, column) tuples
+    # destination_type: = 
+    def __init__(self, volume, stock_solution, destinations, plate, destination_type="misc"):
+        self.volume = volume
+        self.stock_solution = stock_solution
+        self.destinations = destinations
+
+        # generate string that explains how to perform this addition in words
+        # no checking is done to see if destinations and destination_type are consistent
+        if destination_type == "whole row":
+            row_index = destinations[0][0]
+            row_name = plate.row_names[row_index]
+            instruction_string = f"Add {volume} uL to row {row_name} (row number {row_index+1})."
+        elif destination_type == "whole column":
+            pass
+        elif destination_type == "misc":
+            pass
+        else:
+            raise ValueError("unknown destination type")
+        self.instruction_string = instruction_string
+
+    def __str__(self):
+        return self.instruction_string
+
 # represents a 96 well plate
 class Generic96WellPlate(Plate):
     def __init__(self, name, max_volume_per_well):
@@ -152,13 +247,7 @@ class Generic96WellPlate(Plate):
         columns = 12
         super().__init__(name, make, rows, columns, max_volume_per_well)
 
-# represents an addition of a StockSolution to a Plate
-class Instruction(object):
-    def __init__(self):
-        pass
 
-    def __str__(self):
-        pass
 
 ### testing ###
 
@@ -184,3 +273,4 @@ print()
 
 plate = Generic96WellPlate("test plate", 500.0)
 print(plate)
+plate.add_stock_to_row(volume=10.0, stock_solution=triethylamine_10mM, row=1)
