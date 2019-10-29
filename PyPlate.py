@@ -12,6 +12,15 @@ import xlsxwriter
 # constants
 UPPERCASE_LETTERS = list(ascii_uppercase)
 
+# helper methods
+def is_integer(s):
+    try:
+        int(s)
+        return True
+    except ValueError:
+        return False
+
+
 class ReagentType(Enum):
     SOLID = 1
     LIQUID = 2
@@ -183,7 +192,7 @@ class Plate(object):
         destinations = [ (row,column) for column in range(self.n_columns) ]
         instruction = Instruction(volume, stock_solution, destinations, self, destination_type="row")
         self.instructions.append(instruction)
-        print(instruction)
+        #print(instruction)
 
         # update the volumes
         self.volumes[row,:] += volume
@@ -237,7 +246,7 @@ class Plate(object):
         destinations = [ (row,column) for row in range(self.n_rows) ]
         instruction = Instruction(volume, stock_solution, destinations, self, destination_type="column")
         self.instructions.append(instruction)
-        print(instruction)
+        #print(instruction)
 
         # update the volumes
         self.volumes[:,column] += volume
@@ -279,9 +288,13 @@ class Plate(object):
 
         # convert row to row index
         if isinstance(row, str):
-            if row not in self.row_names:
-                raise ValueError(f"row name {row} not found for {str(location)}")
-            row = self.row_names.index(row)
+            if row in self.row_names:
+                row = self.row_names.index(row)
+            else:
+                if is_integer(row) and int(row) > 0 and int(row) <= self.n_rows:
+                    row = int(row) - 1
+                else:
+                    raise ValueError(f"'{row}' in location {str(location)} does not correspond to a valid row")
         elif isinstance(row, int):
             if row < 1 or row > self.n_rows:
                 raise ValueError("row {row} out of range for {str(location)}")
@@ -291,9 +304,13 @@ class Plate(object):
 
         # convert column to column index
         if isinstance(column, str):
-            if column not in self.column_names:
-                raise ValueError(f"column name {column} not found for {str(location)}")
-            column = self.column_names.index(column)
+            if column in self.column_names:
+                column = self.column_names.index(column)
+            else:
+                if is_integer(column) and int(column) > 0 and int(column) <= self.n_columns:
+                    column = int(column) - 1
+                else:
+                    raise ValueError(f"'{column}' in location {str(location)} does not correspond to a valid column")
         elif isinstance(column, int):
             if column < 1 or column > self.n_columns:
                 raise ValueError("column {column} out of range for {str(location)}")
@@ -336,7 +353,7 @@ class Plate(object):
         # record this addition as an Instruction
         instruction = Instruction(volume, stock_solution, new_destinations, self, destination_type="misc")
         self.instructions.append(instruction)
-        print(instruction)
+        #print(instruction)
 
         # update the volumes
         for row,column in new_destinations:
@@ -380,17 +397,40 @@ class Plate(object):
 
         # create file
         workbook = xlsxwriter.Workbook(filename)
+        cm = plt.get_cmap(colormap)
+        normalizer = mpl.colors.Normalize(vmin=0.0, vmax=self.max_volume_per_well)
+        def get_colors(volume):
+            rgba = cm(normalizer(volume))
+            r,g,b,a = rgba
+            background_color = mpl.colors.to_hex(rgba)
+            brightness = (.299 * r) + (.587 * g) + (.114 * b)
+            if brightness < 0.5:
+                font_color = "#FFFFFF"
+            else:
+                font_color = "#000000"
+            #print(brightness,background_color,font_color)
+            return background_color, font_color
 
         # total volumes
         volumes_worksheet = workbook.add_worksheet(self.name)
+        volumes_worksheet.set_column(0,0,10)
+        bold = workbook.add_format({'bold':True})
         volumes_worksheet.write(0,0,"Volumes (uL)")
         for i,column_name in enumerate(self.column_names):
-            volumes_worksheet.write(0,i+1,column_name)
+            volumes_worksheet.write_string(0,i+1,column_name,bold)
         for i,row_name in enumerate(self.row_names):
-            volumes_worksheet.write(i+1,0,row_name)
+            volumes_worksheet.write_string(i+1,0,row_name,bold)
         for row in range(self.n_rows):
             for column in range(self.n_columns):
-                volumes_worksheet.write(row+1,column+1,self.volumes[row,column])
+                volume = self.volumes[row,column]
+                bg_color, font_color = get_colors(volume)
+                cell_format = workbook.add_format()
+                cell_format.set_bg_color(bg_color)
+                cell_format.set_font_color(font_color)
+                if volume > self.max_volume_per_well:
+                    cell_format.set_border(5)
+                    cell_format.set_border_color("#FF0000")
+                volumes_worksheet.write(row+1, column+1, volume, cell_format)
 
 	# instructions
 
@@ -468,46 +508,3 @@ class Generic384WellPlate(Plate):
         columns = 24
         super().__init__(name, make, rows, columns, max_volume_per_well)
 
-### testing ###
-
-sodium_sulfate = Reagent.create_solid("sodium sulfate", 142.04)
-triethylamine = Reagent.create_liquid("triethylamine", 101.19, 0.726)
-water = Reagent.create_liquid("water", 18.01528, 0.997)
-DMSO = Reagent.create_liquid("DMSO", 78.13, 1.1)
-
-sodium_sulfate_halfM = StockSolution(sodium_sulfate, 0.5, water, volume=10.0)
-triethylamine_10mM = StockSolution(triethylamine, 0.01, DMSO, volume=10.0)
-
-print(sodium_sulfate)
-print(sodium_sulfate_halfM)
-print(sodium_sulfate_halfM.get_instructions_string())
-
-print()
-
-print(triethylamine)
-print(triethylamine_10mM)
-print(triethylamine_10mM.get_instructions_string())
-
-print()
-
-plate = Generic96WellPlate("test plate", 500.0)
-print(plate)
-plate.add_stock_to_wells(volume=10.0, stock_solution=triethylamine_10mM, destinations=["A:1","B:2"])
-print("moles")
-print(plate.moles[0])
-
-#plate.add_stock_to_column(volume=15.0, stock_solution=triethylamine_10mM, column="2")
-#print(plate.moles[0])
-#plate.add_stock_to_row(volume=25.0, stock_solution=sodium_sulfate_halfM, row="A")
-#print(plate.moles[0])
-#print(plate.moles[1])
-#plate.add_stock_to_row(volume=25.0, stock_solution=sodium_sulfate_halfM, row=1)
-#print(plate.moles[0])
-#print(plate.moles[1])
-#print()
-
-
-print("volumes")
-print(plate.volumes)
-
-plate.to_excel("plate.xlsx")
