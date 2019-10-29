@@ -80,7 +80,7 @@ class Solvent(object):
         self.volume = volume
 
     def __str__(self):
-        return f"{self.name} (solvent, {self.volume:.2f})"
+        return f"{self.name} (solvent)"
 
 # represents a solution of a reagent in a solvent
 class StockSolution(object):
@@ -123,7 +123,7 @@ class StockSolution(object):
             reagent_volume_string = f"{reagent_volume:.3f} mL" if reagent_volume > 1.0 else f"{reagent_volume*1000.0:.1f} uL"
             required_solvent_string = f"{required_solvent:.3f} mL" if required_solvent > 1.0 else f"{required_solvent*1000.0:.1f} uL"
 
-            return f"Add {reagent_volume_string} of {self.reagent.name} to {required_Solvent_string} of {self.solvent.name}."
+            return f"Add {reagent_volume_string} of {self.reagent.name} to {required_solvent_string} of {self.solvent.name}."
         else:
             raise ValueError("unknown reagent type")
 
@@ -213,6 +213,7 @@ class Plate(object):
         self.instructions = []
 
         # how much of each StockSolution or Solvent was used to make this plate (in uL)
+        # map from item --> volume
         self.volumes_used = OrderedDict()
 
     def __str__(self):
@@ -325,7 +326,7 @@ class Plate(object):
             self.volumes[row,column] += volume
             if what not in self.volumes_used:
                 self.volumes_used[what] = 0.0
-            self.volumes_used[what] += volume * len(canonical_dispense_map)
+        self.volumes_used[what] += volume * len(canonical_dispense_map)
 
         # warn if volume limits have been exceeded for the plate
         current_max_volume = np.max(self.volumes)
@@ -544,10 +545,40 @@ class Plate(object):
                     worksheet1.write_number(row+1+row_zero,column+1,concentration,cell_format)
             row_zero += self.n_rows + 2
 
-        # stock solutions
+        # instructions for how to prepare stocks
+        worksheet2 = workbook.add_worksheet("stocks")
+        worksheet2.set_column(0,0,30)
+        worksheet2.set_column(1,1,10)
+        worksheet2.set_column(2,2,10)
+        worksheet2.set_column(3,3,50)
+        worksheet2.write(1,0,"item",bold)
+        worksheet2.write(0,1,"available",bold)
+        worksheet2.write(1,1,"volume (uL)",bold)
+        worksheet2.write(0,2,"volume",bold)
+        worksheet2.write(1,2,"needed (uL)",bold)
+        worksheet2.write(1,3,"instructions",bold)
+        row_zero = 2
+        for i,(item,required_volume) in enumerate(self.volumes_used.items()):
+            worksheet2.write(row_zero+i,0,str(item))
+            available_volume = item.volume * 1000.0
+            worksheet2.write(row_zero+i,1,available_volume)
+            if available_volume < required_volume:
+                cell_format = workbook.add_format()
+                cell_format.set_border(5)
+                cell_format.set_border_color("FF0000")
+                worksheet2.write(row_zero+i,2,required_volume,cell_format)
+            else:
+                worksheet2.write(row_zero+i,2,required_volume)
+            if isinstance(item, Solvent):
+                worksheet2.write(row_zero+i,3,"n/a")
+            elif isinstance(item, StockSolution):
+                worksheet2.write(row_zero+i,3,item.get_instructions_string())
+            else:
+                raise ValueError("unexpected item type")
 
-	# instructions
-        worksheet3 = workbook.add_worksheet("instructions")
+	# instructions for how to dispense
+        worksheet3 = workbook.add_worksheet("dispensing")
+        worksheet3.set_column(0,0,10)
         row_zero = 0
         bold_highlight2 = workbook.add_format({'bold':True,'bg_color':'#FFFF00','align':'left'})
         n_steps = len(self.instructions)
