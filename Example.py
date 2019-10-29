@@ -1,49 +1,79 @@
-from PyPlate import Reagent, StockSolution, Generic96WellPlate
+from PyPlate import Reagent, StockSolution, Solvent, Generic96WellPlate
 
 ### testing ###
 
-sodium_sulfate = Reagent.create_solid("sodium sulfate", 142.04)
-triethylamine = Reagent.create_liquid("triethylamine", 101.19, 0.726)
-water = Reagent.create_liquid("water", 18.01528, 0.997)
-DMSO = Reagent.create_liquid("DMSO", 78.13, 1.1)
-
-sodium_sulfate_halfM = StockSolution(sodium_sulfate, 0.5, water, volume=10.0)
-triethylamine_10mM = StockSolution(triethylamine, 0.01, DMSO, volume=10.0)
-
+# define reagents
+print("reagents:")
+sodium_sulfate = Reagent.create_solid("sodium sulfate", molecular_weight=142.04)
+triethylamine = Reagent.create_liquid("triethylamine", molecular_weight=101.19, density=0.726)
 print(sodium_sulfate)
-print(sodium_sulfate_halfM)
-print(sodium_sulfate_halfM.get_instructions_string())
-
-print()
-
 print(triethylamine)
-print(triethylamine_10mM)
-print(triethylamine_10mM.get_instructions_string())
-
 print()
 
+# create solvents
+print("solvents:")
+water_DI = Solvent(volume=10.0, name="DI water")       # volume in mL
+water_tap = Solvent(volume=20.0, name="tap water")
+DMSO = Solvent(volume=15.0, name="DMSO")
+print(water_DI)
+print(water_tap)
+print(DMSO)
+print()
+
+# create stocks
+print("stock solutions:")
+sodium_sulfate_halfM = StockSolution(sodium_sulfate, 0.5, water_DI, volume=10.0)
+triethylamine_10mM = StockSolution(triethylamine, 0.01, DMSO, volume=10.0)
+triethylamine_50mM = StockSolution(triethylamine, 0.05, DMSO, volume=10.0)
+print(sodium_sulfate_halfM)
+print(triethylamine_10mM)
+print(triethylamine_50mM)
+print()
+
+# create plate
+print("plate:")
 plate = Generic96WellPlate("test plate", 500.0)
 print(plate)
-plate.add_stock_to_wells(volume=10.0, stock_solution=triethylamine_10mM, destinations=["A:1","B:2"])
 
+# add stuff to the plate
+# volume in uL
+plate.add_custom(what=sodium_sulfate_halfM, dispense_map={(1,1):1.0, ("A",2):2.0, (1,3):3.0})
+plate.add_custom(what=sodium_sulfate_halfM, dispense_map={(3,3):7.0, ("D",3):10.0, (5,"3"):9.0})
+plate.add_custom(what=triethylamine_10mM, dispense_map={"D:10":1.0, (5,10):2.0, (5,"11"):3.0})
+
+dispense_map = {}
 for i,column in enumerate(plate.column_names):
-    plate.add_stock_to_wells(volume=50.0*(i+1), stock_solution=triethylamine_10mM, destinations=f"1:{i+1}")
-plate.add_stock_to_row(volume=15.0, stock_solution=sodium_sulfate_halfM, row=2)
-print("micromoles")
-print(plate.moles[0])
+    where=f"1:{i+1}"
+    volume=42.0*(i+1)
+    dispense_map[where]=volume
+plate.add_custom(what=triethylamine_10mM, dispense_map=dispense_map)
 
-#plate.add_stock_to_column(volume=15.0, stock_solution=triethylamine_10mM, column="2")
-#print(plate.moles[0])
-#plate.add_stock_to_row(volume=25.0, stock_solution=sodium_sulfate_halfM, row="A")
-#print(plate.moles[0])
-#print(plate.moles[1])
-#plate.add_stock_to_row(volume=25.0, stock_solution=sodium_sulfate_halfM, row=1)
-#print(plate.moles[0])
-#print(plate.moles[1])
-#print()
+plate.add_to_rows(what=triethylamine_10mM, how_much=2.0, rows=6)
+plate.add_to_rows(what=triethylamine_10mM, how_much=7.0, rows=[7,"H"])
+plate.add_to_columns(what=triethylamine_10mM, how_much=8.0, columns="10")
+plate.add_to_columns(what=triethylamine_10mM, how_much=9.0, columns=[11,12])
 
+print()
 
-print("volumes")
+# print total volumes
+print("volumes:")
 print(plate.volumes)
+print()
 
-plate.to_excel("plate.xlsx")
+# print how much of each stock solution or solvent we used:
+print("used volumes:")
+for item,volume in plate.volumes_used.items():
+    print(f"{item} : {volume:.1f} uL")
+print()
+
+# print moles
+print("micromoles:\n")
+for i in range(len(plate.moles)):
+    print(plate.reagents[i])
+    print(plate.moles[i,:,:])
+    print()
+print()
+
+# dump plate to excel
+filename = "plate.xlsx"
+plate.to_excel(filename)

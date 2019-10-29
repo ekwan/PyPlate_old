@@ -1,6 +1,7 @@
 from enum import Enum
 from string import ascii_uppercase
 import os
+from collections import OrderedDict
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -20,11 +21,11 @@ def is_integer(s):
     except ValueError:
         return False
 
-
 class ReagentType(Enum):
     SOLID = 1
     LIQUID = 2
 
+# represents a chemical that will be added to solvent to make stock solutions
 class Reagent(object):
     # MW in g/mol, density in g/mL
     def __init__(self, name, molecular_weight, reagent_type, density):
@@ -62,6 +63,26 @@ class Reagent(object):
     def create_liquid(name, molecular_weight, density):
         return Reagent(name, molecular_weight, ReagentType.LIQUID, density)
 
+# represents a solvent for stock solutions
+class Solvent(object):
+    # name: name of solvent
+    # volume: volume in mL
+    def __init__(self, name, volume):
+        if not isinstance(name, str):
+            raise ValueError("solvent name must be string")
+        if len(name) == 0:
+            raise ValueError("solvent has zero-length name")
+        self.name = name
+        if not isinstance(volume, (int,float)):
+            raise ValueError("expected number for volume")
+        if volume <= 0.0:
+            raise ValueError("volume must be positive")
+        self.volume = volume
+
+    def __str__(self):
+        return f"{self.name} (solvent, {self.volume:.2f})"
+
+# represents a solution of a reagent in a solvent
 class StockSolution(object):
     # concentration in mol/L
     # volume in mL
@@ -72,8 +93,8 @@ class StockSolution(object):
         if not isinstance(concentration, (int,float)) or concentration <= 0.0:
             raise ValueError("invalid concentration")
         self.concentration = float(concentration)
-        if not isinstance(solvent, Reagent):
-            raise ValueError("invalid solvent, must be Reagent")
+        if not isinstance(solvent, Solvent):
+            raise ValueError(f"invalid solvent, must be Reagent (got {str(type(solvent))})")
         self.solvent = solvent
         if not isinstance(volume, (int,float)) or volume <= 0.0:
             raise ValueError("invalid volume")
@@ -82,29 +103,36 @@ class StockSolution(object):
     # return a string containing a recipe for this stock solution
     # volume in mL
     def get_instructions_string(self):
-        # (concentration mol / L) * (volume mL * L / 1000 mL) * (molecular_weight g / mol) = weight in g
-        weight = self.concentration * (self.volume / 1000) * (self.reagent.molecular_weight)
-
         if self.reagent.reagent_type == ReagentType.SOLID:
-            if weight < 1.0:
-                return f"Add {weight*1000:.1f} mg of {self.reagent.name} to {self.volume:.2f} mL of {self.solvent.name}."
-            else:
-                return f"Add {weight:.3f} g of {self.reagent.name} to {self.volume:.2f} mL of {self.solvent.name}."
+            # for solids, assume that the added solid contributes zero volume to the solution
+
+            # (concentration mol / L) * (volume mL * L / 1000 mL) * (molecular_weight g / mol) = weight in g
+            weight = self.concentration * (self.volume / 1000) * (self.reagent.molecular_weight)
+            weight_string = f"{weight:.3f} g" if weight > 1.0 else f"{weight*1000.0:.1f} mg"
+            volume_string = f"{self.volume:.3f} mL" if self.volume > 1.0 else f"{self.volume*1000.0:.1f} uL"
+
+            return f"Add {weight_string} of {self.reagent.name} to {volume_string} of {self.solvent.name}."
+
         elif self.reagent.reagent_type == ReagentType.LIQUID:
+            # for liquids, assume that the volumes of the reagent and solvent are additive
+
             # weight in g / density in g/mL = reagent volume in mL
+            weight = self.concentration * (self.volume / 1000) * (self.reagent.molecular_weight)
             reagent_volume = weight / self.reagent.density
-            if reagent_volume < 1.0:
-                return f"Add {reagent_volume*1000:.3f} uL of {self.reagent.name} to {self.volume:.3f} mL of {self.solvent.name}."
-            else:
-                return f"Add {reagent_volume:.3f} mL of {self.reagent.name} to {self.volume:.3f} mL of {self.solvent.name}."
+            required_solvent = self.volume - reagent_volume
+            reagent_volume_string = f"{reagent_volume:.3f} mL" if reagent_volume > 1.0 else f"{reagent_volume*1000.0:.1f} uL"
+            required_solvent_string = f"{required_solvent:.3f} mL" if required_solvent > 1.0 else f"{required_solvent*1000.0:.1f} uL"
+
+            return f"Add {reagent_volume_string} of {self.reagent.name} to {required_Solvent_string} of {self.solvent.name}."
         else:
             raise ValueError("unknown reagent type")
 
     def __str__(self):
+        name = self.reagent.name
         if self.concentration > 0.1:
-            return f"{self.reagent.name} ({self.concentration:.2f} M in {self.solvent.name})"
+            return f"{name} ({self.concentration:.2f} M in {self.solvent.name})"
         else:
-            return f"{self.reagent.name} ({self.concentration*1000.0:.1f} mM in {self.solvent.name})"
+            return f"{name} ({self.concentration*1000.0:.1f} mM in {self.solvent.name})"
 
 # represents a generic plate
 class Plate(object):
@@ -133,6 +161,10 @@ class Plate(object):
             for row in rows:
                 if not isinstance(row, str):
                     raise ValueError("row names must be strings")
+                if len(row.strip()) == 0:
+                    raise ValueError("zero length strings are not allowed as column labels")
+                if is_integer(row):
+                    raise ValueError(f"please don't confuse me with row names that are integers ({row})")
             if len(rows) != len(set(rows)):
                 raise ValueError("duplicate row names found")
             self.n_rows = len(rows)
@@ -153,6 +185,10 @@ class Plate(object):
             for column in columns:
                 if not isinstance(column, str):
                     raise ValueError("row names must be strings")
+                if len(column.strip()) == 0:
+                    raise ValueError("zero length strings are not allowed as column labels")
+                if is_integer(column):
+                    raise ValueError(f"please don't confuse me with column names that are integers({column})")
             if len(columns) != len(set(columns)):
                 raise ValueError("duplicate column names found")
             self.n_columns = len(columns)
@@ -160,125 +196,38 @@ class Plate(object):
         else:
             raise ValueError("columns must be int or list")
 
-        self.reagents = []                                       # labels the reagents in self.moles
-        self.volumes = np.zeros((self.n_rows,self.n_columns))    # in uL
-        self.moles = None                                        # in micromoles, shape:(reagent, rows, columns)
-        self.instructions = []                                   # list of instructions for making this plate
+        # list of all reagents used, in the ordered added
+        self.reagents = []
+
+        # how much volume is currently in each well (in uL)
+        self.volumes = np.zeros((self.n_rows,self.n_columns))
+
+        # how many moles of each reagent are in each well (in micromoles, shape:(reagent, rows, columns))
+        # note that only Reagent moles are tracked (Solvent moles are not tracked)
+        # the ordering in axis 0 parallels the order in self.reagents
+        self.moles = None
+
+        # list of instructions for making this plate
+        # each instruction is a map from a StockSolution or Solvent to a canonical dispense map
+        # canonical dispense maps are dictionaries from 0-indexed (row,column) tuples to volumes in uL
+        self.instructions = []
+
+        # how much of each StockSolution or Solvent was used to make this plate (in uL)
+        self.volumes_used = OrderedDict()
 
     def __str__(self):
         return f"{self.name} ({self.make}, {self.n_rows}x{self.n_columns}, max {self.max_volume_per_well:.0f} uL/well)"
 
-    # add specified volume of stock to one row
-    # volume: in uL
-    # stock_solution: which stock to add
-    # row: row name or row index (1-indexed)
-    def add_stock_to_row(self, volume, stock_solution, row):
-        if (not isinstance(volume, (int,float))) or volume <= 0.0:
-            raise ValueError("invalid volume")
-        if not isinstance(stock_solution, StockSolution):
-            raise ValueError(f"expected a StockSolution, but got a {str(type(stock_solution))}")
-        if isinstance(row, str):
-            if row not in self.row_names:
-                raise ValueError(f"row name {row} not found")
-            row = self.row_names.index(row)
-        elif isinstance(row, int):
-            if row < 1 or row > self.n_rows:
-                raise ValueError("row out of range")
-            row = row - 1
-        else:
-            raise ValueError("must specify row as 1-indexed number or row name")
-
-        # record this addition as an Instruction
-        destinations = [ (row,column) for column in range(self.n_columns) ]
-        instruction = Instruction(volume, stock_solution, destinations, self, destination_type="row")
-        self.instructions.append(instruction)
-        #print(instruction)
-
-        # update the volumes
-        self.volumes[row,:] += volume
-
-        # warn if we have exceeded volumes
-        current_max_volume = np.max(self.volumes)
-        if np.max(self.volumes) > self.max_volume_per_well:
-            print(f"Warning: exceeded maximum well volume!  (Now {current_max_volume:.0f} uL, but limit is {self.max_volume_per_well:.0f} ul).")
-
-        # determine if we have added this reagent already
-        reagent = stock_solution.reagent
-        reagent_index = -1
-        if reagent not in self.reagents:
-            self.reagents.append(reagent)
-            reagent_index = len(self.reagents)-1
-            blank_array = np.zeros((1, self.n_rows, self.n_columns))
-            if len(self.reagents) == 1:
-                # this is the first reagent
-                self.moles = blank_array
-            else:
-                # this is the n-th reagent
-                self.moles = np.concatenate((self.moles, blank_array), axis=0)
-        else:
-            reagent_index = self.reagents.index(reagent)
-
-        # update the moles
-        extra_moles = volume * stock_solution.concentration
-        self.moles[reagent_index,row,:] += extra_moles
-
-    # add specified volume of stock to one column
-    # volume: in uL
-    # stock_solution: which stock to add
-    # column: column name or column index (1-indexed)
-    def add_stock_to_column(self, volume, stock_solution, column):
-        if (not isinstance(volume, (int,float))) or volume <= 0.0:
-            raise ValueError("invalid volume")
-        if not isinstance(stock_solution, StockSolution):
-            raise ValueError(f"expected a StockSolution, but got a {str(type(stock_solution))}")
-        if isinstance(column, str):
-            if column not in self.column_names:
-                raise ValueError(f"column name {column} not found")
-            column = self.column_names.index(column)
-        elif isinstance(column, int):
-            if column < 1 or column > self.n_columns:
-                raise ValueError("column out of range")
-            column = column - 1
-        else:
-            raise ValueError("must specify column as 1-indexed number or column name")
-
-        # record this addition as an Instruction
-        destinations = [ (row,column) for row in range(self.n_rows) ]
-        instruction = Instruction(volume, stock_solution, destinations, self, destination_type="column")
-        self.instructions.append(instruction)
-        #print(instruction)
-
-        # update the volumes
-        self.volumes[:,column] += volume
-
-        # warn if we have exceeded volumes
-        current_max_volume = np.max(self.volumes)
-        if np.max(self.volumes) > self.max_volume_per_well:
-            print(f"Warning: exceeded maximum well volume!  (Now {current_max_volume:.0f} uL, but limit is {self.max_volume_per_well:.0f} ul).")
-
-        # determine if we have added this reagent already
-        reagent = stock_solution.reagent
-        reagent_index = -1
-        if reagent not in self.reagents:
-            self.reagents.append(reagent)
-            reagent_index = len(self.reagents)-1
-            blank_array = np.zeros((1, self.n_rows, self.n_columns))
-            if len(self.reagents) == 1:
-                # this is the first reagent
-                self.moles = blank_array
-            else:
-                # this is the n-th reagent
-                self.moles = np.concatenate((self.moles, blank_array), axis=0)
-        else:
-            reagent_index = self.reagents.index(reagent)
-
-        # update the moles
-        extra_moles = volume * stock_solution.concentration
-        self.moles[reagent_index,:,column] += extra_moles
-
-    # converts a location tuple into a canonical form:
-    # (row, column) (both zero-indexed)
-    def location_tuple_to_index_form(self, location):
+    # converts a location tuple into a canonical form
+    #
+    # inputs are assumed to be 2-tuples
+    # components can be row/column labels or 1-indexed locations
+    #
+    # examples:
+    # (0,1) is already in canonical form
+    # ("A",1) --> (0,0)
+    # ("B","2") --> (1,1)
+    def get_canonical_form(self, location):
         if not isinstance(location, tuple):
             raise ValueError("location must be a tuple")
         if not len(location) == 2:
@@ -288,7 +237,9 @@ class Plate(object):
 
         # convert row to row index
         if isinstance(row, str):
-            if row in self.row_names:
+            if len(row) == 0:
+                raise ValueError(f"empty row in {location}")
+            elif row in self.row_names:
                 row = self.row_names.index(row)
             else:
                 if is_integer(row) and int(row) > 0 and int(row) <= self.n_rows:
@@ -297,14 +248,16 @@ class Plate(object):
                     raise ValueError(f"'{row}' in location {str(location)} does not correspond to a valid row")
         elif isinstance(row, int):
             if row < 1 or row > self.n_rows:
-                raise ValueError("row {row} out of range for {str(location)}")
+                raise ValueError(f"row {row} out of range for {str(location)}")
             row = row - 1
         else:
             raise ValueError(f"error parsing {str(location)}: must specify row as 1-indexed number or row name")
 
         # convert column to column index
         if isinstance(column, str):
-            if column in self.column_names:
+            if len(column) == 0:
+                raise ValueError(f"empty column in {location}")
+            elif column in self.column_names:
                 column = self.column_names.index(column)
             else:
                 if is_integer(column) and int(column) > 0 and int(column) <= self.n_columns:
@@ -313,7 +266,7 @@ class Plate(object):
                     raise ValueError(f"'{column}' in location {str(location)} does not correspond to a valid column")
         elif isinstance(column, int):
             if column < 1 or column > self.n_columns:
-                raise ValueError("column {column} out of range for {str(location)}")
+                raise ValueError(f"column {column} out of range for {str(location)}")
             column = column - 1
         else:
             raise ValueError(f"error parsing {str(location)}: must specify column as 1-indexed number or column name")
@@ -321,69 +274,192 @@ class Plate(object):
         result = (row,column)
         return result
 
-    # add specified volume of stock to specified wells
-    # volume: in uL
-    # stock_solution: which stock to add
-    # destinations: (row,column) or [ (row,column) ], can specify 1-indexed locations or row/column names like "A:1"
-    def add_stock_to_wells(self, volume, stock_solution, destinations):
-        if (not isinstance(volume, (int,float))) or volume <= 0.0:
-            raise ValueError("invalid volume")
-        if not isinstance(stock_solution, StockSolution):
-            raise ValueError(f"expected a StockSolution, but got a {str(type(stock_solution))}")
+    # add StockSolution or Solvent to the specified destinations
+    # all other adding methods call this method
+    # what: StockSolution or Solvent
+    # dispense_map: dictionary from location tuples or strings to volumes in uL
+    # examples:
+    # {"D:10":1.0, (5,10):2.0, (5,11):3.0}
+    def add_custom(self, what, dispense_map):
+        # check invariants
+        if what is None or not isinstance(what, (StockSolution,Solvent)):
+            raise ValueError(f"expected a StockSolution or Solvent, but got a {str(type(what))} instead")
+        if dispense_map is None:
+            raise ValueError("must provide a dispense map")
+        if not isinstance(dispense_map, dict):
+            raise ValueError(f"expected a dict for the dispense_map, but got a {str(type(dispense_map))} instead")
+        if len(dispense_map) == 0:
+            raise ValueError("must dispense at least one thing")
+        for k,v in dispense_map.items():
+            if isinstance(k,tuple):
+                if len(k) != 2:
+                    raise ValueError(f"locations in dispense map must have two coordinates: *{k}* -> {v}")
+                if not isinstance(k[0], (int,str)) or not isinstance(k[1], (int,str)):
+                    raise ValueError(f"invalid location in dispense map: *{k}* -> {v}")
+            elif isinstance(k,str):
+                if k.count(":") != 1:
+                    raise ValueError(f"locations should have one colon (:) to separate rows from columns: *{k}* -> {v}")
+            else:
+                raise ValueError(f"invalid location in dispense map: *{k}* -> {v}")
 
-        # construct list of destinations: [ (row, column) ] with 0-indexing
-        new_destinations = []
-        if isinstance(destinations, (tuple, str)):
-            destinations = [ destinations ]
-        if isinstance(destinations, list):
-            for destination in destinations:
-                if isinstance(destination, str):
-                    fields = destination.split(":")
-                    if len(fields) != 2:
-                        raise ValueError(f"invalid location string {destination}")
-                    destination = tuple(fields)
-                if isinstance(destination, tuple):
-                    destination = self.location_tuple_to_index_form(destination)
-                else:
-                    raise ValueError(f"unrecognized location tuple {str(destination)}")
-                new_destinations.append(destination)
-        else:
-            raise ValueError("destinations must be a single tuple or list of tuples")
+                if not isinstance(v,(int,float)) or v <= 0.0:
+                    raise ValueError(f"invalid volume in dispense map {k} -> *{v}*")
 
-        # record this addition as an Instruction
-        instruction = Instruction(volume, stock_solution, new_destinations, self, destination_type="misc")
-        self.instructions.append(instruction)
-        #print(instruction)
+        # convert dispense map locations to canonical locations
+        canonical_dispense_map = {}
+        for input_location,volume in dispense_map.items():
+            if isinstance(input_location,str):
+                fields = input_location.split(":")
+                input_location = tuple(fields)
+            canonical_location = self.get_canonical_form(input_location)
+            #print(input_location, ":", canonical_location)
+            if canonical_location in canonical_dispense_map:
+                raise ValueError(f"cannot add twice to location {input_location}")
+            canonical_dispense_map[canonical_location] = volume
+
+        # record this addition so that we can print it out later
+        self.instructions.append((what, canonical_dispense_map))
 
         # update the volumes
-        for row,column in new_destinations:
+        for (row,column),volume in canonical_dispense_map.items():
             self.volumes[row,column] += volume
+            if what not in self.volumes_used:
+                self.volumes_used[what] = 0.0
+            self.volumes_used[what] += volume * len(canonical_dispense_map)
 
-        # warn if we have exceeded volumes
+        # warn if volume limits have been exceeded for the plate
         current_max_volume = np.max(self.volumes)
-        if np.max(self.volumes) > self.max_volume_per_well:
+        if current_max_volume > self.max_volume_per_well:
             print(f"Warning: exceeded maximum well volume!  (Now {current_max_volume:.0f} uL, but limit is {self.max_volume_per_well:.0f} ul).")
 
-        # determine if we have added this reagent already
-        reagent = stock_solution.reagent
-        reagent_index = -1
-        if reagent not in self.reagents:
-            self.reagents.append(reagent)
-            reagent_index = len(self.reagents)-1
-            blank_array = np.zeros((1, self.n_rows, self.n_columns))
-            if len(self.reagents) == 1:
-                # this is the first reagent
-                self.moles = blank_array
+        # for StockSolutions, keep track of how many micromoles have been added of the relevant reagent
+        if isinstance(what, StockSolution):
+            reagent = what.reagent
+            reagent_index = -1
+            if reagent not in self.reagents:
+                self.reagents.append(reagent)
+                reagent_index = len(self.reagents)-1
+                blank_array = np.zeros((1, self.n_rows, self.n_columns))
+                if len(self.reagents) == 1:
+                    # this is the first reagent
+                    self.moles = blank_array
+                else:
+                    # this is the n-th reagent
+                    self.moles = np.concatenate((self.moles, blank_array), axis=0)
             else:
-                # this is the n-th reagent
-                self.moles = np.concatenate((self.moles, blank_array), axis=0)
-        else:
-            reagent_index = self.reagents.index(reagent)
+                reagent_index = self.reagents.index(reagent)
 
-        # update the moles
-        extra_moles = volume * stock_solution.concentration
-        for row,column in new_destinations:
-            self.moles[reagent_index,row,column] += extra_moles
+            # update the moles (in micromoles)
+            for (row,column),volume in canonical_dispense_map.items():
+                extra_moles = volume * what.concentration  # uL * mol / L = umol
+                self.moles[reagent_index,row,column] += extra_moles
+
+    # add StockSolution or Solvent to the specified rows
+    # what: StockSolution or Solvent
+    # how_much: volume in uL (same for every row)
+    # rows: 1, "B", or [1, 2, "C"] (no duplicates allowed, 1-indexed)
+    def add_to_rows(self, what, how_much, rows):
+        if not isinstance(what, (StockSolution,Solvent)):
+            raise ValueError(f"must add StockSolution or Solvent but got {str(type(what))} instead")
+        if not isinstance(how_much, (float,int)) or how_much <= 0.0:
+            raise ValueError(f"invalid amount of stuff {how_much}")
+        if rows is None:
+            raise ValueError("must specify a destination")
+
+        # convert to int if necessary
+        elif isinstance(rows, str):
+            if rows in self.row_names:
+                rows = self.row_names.index(rows) + 1
+            elif not is_integer(rows):
+                raise ValueError(f"invalid location: {rows}")
+            rows = int(rows)
+
+        # construct canonical location map
+        dispense_map = {}
+        if isinstance(rows, int):
+            if rows < 1 or rows > self.n_rows:
+                raise ValueError(f"row out of range: {rows}")
+            for column in range(self.n_columns):
+                location = (rows,column+1)
+                dispense_map[location] = how_much
+        elif isinstance(rows, list):
+            rows2 = []
+            for row in rows:
+                if isinstance(row,str):
+                    if row in self.row_names:
+                        row = self.row_names.index(row) + 1
+                    elif not is_integer(rows):
+                        raise ValueError(f"invalid row: {rows}")
+                    row = int(row)
+                elif isinstance(row,int):
+                    if row < 1 or row > self.n_rows:
+                        raise ValueError(f"row out of range: {row}")
+                else:
+                    raise ValueError(f"invalid location: {row}")
+                rows2.append(row)
+            if len(rows) != len(set(rows2)):
+                raise ValueError(f"check for duplicates in locations: {rows}")
+            for column in range(self.n_columns):
+                for row in rows2:
+                    location = (row,column+1)
+                    dispense_map[location] = how_much
+        else:
+            raise ValueError(f"unexpected input for destination: {rows}")
+        self.add_custom(what, dispense_map)
+
+    # add StockSolution or Solvent to the specified columns
+    # what: StockSolution or Solvent
+    # how_much: volume in uL (same for every column)
+    # columns: 1, "B", or [1, 2, "C"] (no duplicates allowed, 1-indexed)
+    # add StockSolution or Solvent to the specified columns
+    def add_to_columns(self, what, how_much, columns):
+        if not isinstance(what, (StockSolution,Solvent)):
+            raise ValueError(f"must add StockSolution or Solvent but got {str(type(what))} instead")
+        if not isinstance(how_much, (float,int)) or how_much <= 0.0:
+            raise ValueError(f"invalid amount of stuff {how_much}")
+        if columns is None:
+            raise ValueError("must specify a destination")
+
+        # convert to int if necessary
+        elif isinstance(columns, str):
+            if columns in self.column_names:
+                columns = self.column_names.index(columns) + 1
+            elif not is_integer(columns):
+                raise ValueError(f"invalid location: {columns}")
+            columns = int(columns)
+
+        # construct canonical location map
+        dispense_map = {}
+        if isinstance(columns, int):
+            if columns < 1 or columns > self.n_columns:
+                raise ValueError(f"column out of range: {columns}")
+            for row in range(self.n_rows):
+                location = (row+1,columns)
+                dispense_map[location] = how_much
+        elif isinstance(columns, list):
+            columns2 = []
+            for column in columns:
+                if isinstance(column,str):
+                    if column in self.column_names:
+                        column = self.column_names.index(column) + 1
+                    elif not is_integer(columns):
+                        raise ValueError(f"invalid column: {columns}")
+                    column = int(column)
+                elif isinstance(column,int):
+                    if column < 1 or column > self.n_columns:
+                        raise ValueError(f"column out of range: {column}")
+                else:
+                    raise ValueError(f"invalid location: {column}")
+                columns2.append(column)
+            if len(columns) != len(set(columns2)):
+                raise ValueError(f"check for duplicates in locations: {columns}")
+            for row in range(self.n_rows):
+                for column in columns2:
+                    location = (row+1,column)
+                    dispense_map[location] = how_much
+        else:
+            raise ValueError(f"unexpected input for destination: {columns}")
+        self.add_custom(what, dispense_map)
 
     # create an Excel spreadsheet summarizing this plate
     def to_excel(self, filename, colormap='plasma', do_not_overwrite=False):
@@ -395,12 +471,13 @@ class Plate(object):
             else:
                 os.remove(filename)
 
-        # create file
-        workbook = xlsxwriter.Workbook(filename)
-        cm = plt.get_cmap(colormap)
-        normalizer = mpl.colors.Normalize(vmin=0.0, vmax=self.max_volume_per_well)
-        def get_colors(volume):
-            rgba = cm(normalizer(volume))
+        # helper function
+        # value: color based on this number
+        # normalizer: mpl.colors.Normalize(vmin, vmax)
+        def get_colors(value, normalizer):
+            if np.isnan(value):
+                return "#000000","#000000"
+            rgba = cm(normalizer(value))
             r,g,b,a = rgba
             background_color = mpl.colors.to_hex(rgba)
             brightness = (.299 * r) + (.587 * g) + (.114 * b)
@@ -411,86 +488,69 @@ class Plate(object):
             #print(brightness,background_color,font_color)
             return background_color, font_color
 
+        # create file
+        workbook = xlsxwriter.Workbook(filename)
+        cm = plt.get_cmap(colormap)
+
         # total volumes
-        volumes_worksheet = workbook.add_worksheet(self.name)
-        volumes_worksheet.set_column(0,0,10)
-        bold = workbook.add_format({'bold':True})
-        volumes_worksheet.write(0,0,"Volumes (uL)")
+        worksheet1 = workbook.add_worksheet(self.name)
+        worksheet1.set_column(0,0,20)
+        bold = workbook.add_format({'bold':True,'align':'right'})
+        bold_highlight = workbook.add_format({'bold':True,'bg_color':'#FFFF00','align':'right'})
+        worksheet1.write(0,0,"Volumes (uL)",bold_highlight)
         for i,column_name in enumerate(self.column_names):
-            volumes_worksheet.write_string(0,i+1,column_name,bold)
+            worksheet1.write_string(0,i+1,column_name,bold)
         for i,row_name in enumerate(self.row_names):
-            volumes_worksheet.write_string(i+1,0,row_name,bold)
+            worksheet1.write_string(i+1,0,row_name,bold)
+        normalizer = mpl.colors.Normalize(vmin=0.0, vmax=self.max_volume_per_well)
         for row in range(self.n_rows):
             for column in range(self.n_columns):
                 volume = self.volumes[row,column]
-                bg_color, font_color = get_colors(volume)
+                bg_color, font_color = get_colors(volume, normalizer)
                 cell_format = workbook.add_format()
                 cell_format.set_bg_color(bg_color)
                 cell_format.set_font_color(font_color)
                 if volume > self.max_volume_per_well:
                     cell_format.set_border(5)
                     cell_format.set_border_color("#FF0000")
-                volumes_worksheet.write(row+1, column+1, volume, cell_format)
+                worksheet1.write(row+1, column+1, volume, cell_format)
+
+        # reagent concentrations in millimolar
+        row_zero = self.n_rows + 2
+        for reagent_index,reagent in enumerate(self.reagents):
+            moles = self.moles[reagent_index]  # in micromoles
+            volumes = self.volumes             # in microliters
+            with np.errstate(divide='ignore', invalid='ignore'):
+                concentrations = np.true_divide(moles, volumes)
+                concentrations[~np.isfinite(concentrations)]=0
+                concentrations = concentrations * 1000.0
+            max_concentration = np.max(concentrations)
+            normalizer = mpl.colors.Normalize(vmin=0.0, vmax=max_concentration)
+            worksheet1.write_string(row_zero,0,f"{reagent.name} (mM)",bold_highlight)
+            for i,column_name in enumerate(self.column_names):
+                worksheet1.write_string(row_zero,i+1,column_name,bold)
+            for i,row_name in enumerate(self.row_names):
+                worksheet1.write_string(i+1+row_zero,0,row_name,bold)
+            for row in range(self.n_rows):
+                for column in range(self.n_columns):
+                    concentration = concentrations[row,column]
+                    if np.isnan(concentration):
+                        continue
+                    bg_color, font_color = get_colors(concentration, normalizer)
+                    cell_format = workbook.add_format()
+                    cell_format.set_bg_color(bg_color)
+                    cell_format.set_font_color(font_color)
+                    cell_format.set_num_format('0.0')
+                    worksheet1.write_number(row+1+row_zero,column+1,concentration,cell_format)
+            row_zero += self.n_rows + 2
+
+        # stock solutions
 
 	# instructions
-
-	# reagents
-
-
-        # reagent concentrations
 
         # update status
         workbook.close()
         print("done.")
-
-# represents an addition of a StockSolution to a Plate
-class Instruction(object):
-    # volume: in uL
-    # stock_solution: StockSolution
-    # destinations: list of 0-indexed (row, column) tuples
-    # destination_type: = 
-    def __init__(self, volume, stock_solution, destinations, plate, destination_type="misc"):
-        self.volume = volume
-        self.stock_solution = stock_solution
-        self.destinations = destinations
-        stock_name = stock_solution.reagent.name
-        stock_concentration = stock_solution.concentration * 1000.0
-        stock_solvent = stock_solution.solvent.name
-
-        # generate string that explains how to perform this addition in words
-        # no checking is done to see if destinations and destination_type are consistent
-        if destination_type == "row":
-            row_index = destinations[0][0]
-            row_name = plate.row_names[row_index]
-            if row_name == str(row_index+1):
-                instruction_string = f"Add {volume} uL of {stock_name} ({stock_concentration} mM in {stock_solvent}) to row {row_name}."
-            else:
-                instruction_string = f"Add {volume} uL of {stock_name} ({stock_concentration} mM in {stock_solvent}) to row {row_name} (row number {row_index+1})."
-        elif destination_type == "column":
-            column_index = destinations[0][1]
-            column_name = plate.column_names[column_index]
-            if column_name == str(column_index+1):
-                instruction_string = f"Add {volume} uL of {stock_name} ({stock_concentration} mM in {stock_solvent}) to column {column_name}."
-            else:
-                instruction_string = f"Add {volume} uL of {stock_name} ({stock_concentration} mM in {stock_solvent}) to column {column_name} (column number {column_index+1})."
-        elif destination_type == "misc":
-            instruction_string = f"Add {volume} uL of {stock_name} ({stock_concentration} mM in {stock_solvent}) to:\n   "
-            count = 0
-            for i,(row,column) in enumerate(destinations):
-                row_name = plate.row_names[row]
-                column_name = plate.column_names[column]
-                well = f"{row_name}{column_name}"
-                instruction_string += f"{well:6s} "
-                count += 1
-                if count > 20 and i != len(destinations)-1:
-                    count = 0
-                    instruction_string += "\n   "
-        else:
-            raise ValueError("unknown destination type")
-        self.instruction_string = instruction_string
-
-    def __str__(self):
-        return self.instruction_string
 
 # represents a 96 well plate
 class Generic96WellPlate(Plate):
