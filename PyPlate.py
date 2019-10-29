@@ -547,6 +547,35 @@ class Plate(object):
         # stock solutions
 
 	# instructions
+        worksheet3 = workbook.add_worksheet("instructions")
+        row_zero = 0
+        bold_highlight2 = workbook.add_format({'bold':True,'bg_color':'#FFFF00','align':'left'})
+        n_steps = len(self.instructions)
+        for step,(what,canonical_dispense_map) in enumerate(self.instructions):
+            worksheet3.merge_range(row_zero,0,row_zero,1,f"Step {step+1} of {n_steps}",bold_highlight2)
+            worksheet3.merge_range(row_zero,2,row_zero,5,f"Add {str(what)} to:",bold_highlight2)
+            for i,column_name in enumerate(self.column_names):
+                worksheet3.write_string(row_zero+1,i+1,column_name,bold)
+            for i,row_name in enumerate(self.row_names):
+                worksheet3.write_string(row_zero+2+i,0,row_name,bold)
+            max_volume_added = 0.0
+            for location,volume in canonical_dispense_map.items():
+                if volume > max_volume_added:
+                    max_volume_added = volume
+            normalizer = mpl.colors.Normalize(vmin=0.0, vmax = max_volume_added)
+            for row in range(self.n_rows):
+                for column in range(self.n_columns):
+                    location = (row,column)
+                    volume = 0.0
+                    if location in canonical_dispense_map:
+                        volume = canonical_dispense_map[location]
+                    bg_color, font_color = get_colors(volume, normalizer)
+                    cell_format = workbook.add_format()
+                    cell_format.set_bg_color(bg_color)
+                    cell_format.set_font_color(font_color)
+                    worksheet3.write(row_zero+2+row,1+column,volume,cell_format)
+
+            row_zero += self.n_rows + 3
 
         # update status
         workbook.close()
