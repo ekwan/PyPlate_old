@@ -18,3 +18,19 @@ for index, aa in enumerate(amino_acids.keys()):
     catalyst_solns[index] = StockSolution(catalysts[index], molarity, toluene, volume=5.0)
     print(catalyst_solns[index])
 
+imine1 = Reagent.create_solid("tryptamine-benzaldehyde", 248.33)
+imine2 = Reagent.create_solid("tryptamine-4Fbenzaldehyde", 266.32)
+imine1_soln = StockSolution(imine1, 0.1, toluene, volume=10.0)
+imine2_soln = StockSolution(imine2, 0.1, toluene, volume=10.0)
+
+plate = Generic96WellPlate("test plate", 500.0)
+
+plate.add_to_rows(what=imine1_soln, how_much=100, rows=[1, 2])
+plate.add_to_rows(what=imine2_soln, how_much=100, rows=[3, 4])
+
+for index, catalyst_soln in enumerate(catalyst_solns):
+    plate.add_to_columns(what=catalyst_soln, how_much=50, columns=[index+1])
+
+
+filename = "plate.xlsx"
+plate.to_excel(filename)

@@ -172,7 +172,13 @@ class Plate(object):
         else:
             raise ValueError("rows must be int or list")
 
-        self.max_volume_per_well = max_volume_per_well
+        try:
+            max_volume_per_well = float(max_volume_per_well)
+            if (max_volume_per_well <= 0):
+                raise ValueError("max volume per well must be greater than zero")
+            self.max_volume_per_well = max_volume_per_well
+        except:
+            raise ValueError(f"invalid max volume per well {max_volume_per_well}")
 
         if isinstance(columns, int):
             if columns < 1:
