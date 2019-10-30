@@ -94,7 +94,7 @@ class StockSolution(object):
             raise ValueError("invalid concentration")
         self.concentration = float(concentration)
         if not isinstance(solvent, Solvent):
-            raise ValueError(f"invalid solvent, must be Reagent (got {str(type(solvent))})")
+            raise ValueError(f"expected a Solvent for the solvent but got a {str(type(solvent))} instead")
         self.solvent = solvent
         if not isinstance(volume, (int,float)) or volume <= 0.0:
             raise ValueError("invalid volume")
