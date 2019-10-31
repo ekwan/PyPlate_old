@@ -21,8 +21,10 @@ print(DMSO)
 print()
 
 # create stocks
+# concentrations in M
+# volumes in M
 print("stock solutions:")
-sodium_sulfate_halfM = StockSolution(sodium_sulfate, 0.5, water_DI, volume=10.0)
+sodium_sulfate_halfM = StockSolution(what=sodium_sulfate, concentration=0.5, solvent=water_DI, volume=10.0)
 triethylamine_10mM = StockSolution(triethylamine, 0.01, DMSO, volume=10.0)
 triethylamine_50mM = StockSolution(triethylamine, 0.05, DMSO, volume=10.0)
 print(sodium_sulfate_halfM)

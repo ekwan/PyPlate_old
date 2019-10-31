@@ -84,17 +84,31 @@ class Solvent(object):
 
 # represents a solution of a reagent in a solvent
 class StockSolution(object):
-    # concentration in mol/L
-    # volume in mL
-    def __init__(self, reagent, concentration, solvent, volume):
-        if not isinstance(reagent, Reagent):
-            raise ValueError("invalid reagent")
-        self.reagent = reagent
+    # what: Reagent or StockSolution
+    # concentration: float in mol/L
+    # solvent: Solvent
+    # volume: float in mL
+    def __init__(self, what, concentration, solvent, volume):
+        if not isinstance(what, (Reagent, StockSolution)):
+            raise ValueError(f"expected a Reagent or StockSolution but got a {type(what)} instead")
+        self.what = what
+        if isinstance(what, Reagent):
+            self.name = what.name
+            self.reagent = what
+        elif isinstance(what, StockSolution):
+            if concentration >= what.concentration:
+                raise ValueError("StockSolutions made from other StockSolutions must be more dilute")
+            if solvent != what.solvent:
+                raise ValueError("StockSolution dilutions must be made in the same solvent")
+            self.name = what.name
+            self.reagent = what.reagent
+        else:
+            raise ValueError("unknown type")
         if not isinstance(concentration, (int,float)) or concentration <= 0.0:
             raise ValueError("invalid concentration")
         self.concentration = float(concentration)
         if not isinstance(solvent, Solvent):
-            raise ValueError(f"expected a Solvent for the solvent but got a {str(type(solvent))} instead")
+            raise ValueError(f"expected a Solvent for the solvent but got a {type(solvent)} instead")
         self.solvent = solvent
         if not isinstance(volume, (int,float)) or volume <= 0.0:
             raise ValueError("invalid volume")
@@ -103,32 +117,46 @@ class StockSolution(object):
     # return a string containing a recipe for this stock solution
     # volume in mL
     def get_instructions_string(self):
-        if self.reagent.reagent_type == ReagentType.SOLID:
-            # for solids, assume that the added solid contributes zero volume to the solution
+        if isinstance(self.what, Reagent):
+            if self.what.reagent_type == ReagentType.SOLID:
+                # for solids, assume that the added solid contributes zero volume to the solution
 
-            # (concentration mol / L) * (volume mL * L / 1000 mL) * (molecular_weight g / mol) = weight in g
-            weight = self.concentration * (self.volume / 1000) * (self.reagent.molecular_weight)
-            weight_string = f"{weight:.3f} g" if weight > 1.0 else f"{weight*1000.0:.1f} mg"
-            volume_string = f"{self.volume:.3f} mL" if self.volume > 1.0 else f"{self.volume*1000.0:.1f} uL"
+                # (concentration mol / L) * (volume mL * L / 1000 mL) * (molecular_weight g / mol) = weight in g
+                weight = self.concentration * (self.volume / 1000) * (self.what.molecular_weight)
+                weight_string = f"{weight:.3f} g" if weight > 1.0 else f"{weight*1000.0:.1f} mg"
+                volume_string = f"{self.volume:.3f} mL" if self.volume > 1.0 else f"{self.volume*1000.0:.1f} uL"
 
-            return f"Add {weight_string} of {self.reagent.name} to {volume_string} of {self.solvent.name}."
+                return f"Add {weight_string} of {self.name} to {volume_string} of {self.solvent.name}."
 
-        elif self.reagent.reagent_type == ReagentType.LIQUID:
-            # for liquids, assume that the volumes of the reagent and solvent are additive
+            elif self.what.reagent_type == ReagentType.LIQUID:
+                # for liquids, assume that the volumes of the reagent and solvent are additive
 
-            # weight in g / density in g/mL = reagent volume in mL
-            weight = self.concentration * (self.volume / 1000) * (self.reagent.molecular_weight)
-            reagent_volume = weight / self.reagent.density
-            required_solvent = self.volume - reagent_volume
-            reagent_volume_string = f"{reagent_volume:.3f} mL" if reagent_volume > 1.0 else f"{reagent_volume*1000.0:.1f} uL"
-            required_solvent_string = f"{required_solvent:.3f} mL" if required_solvent > 1.0 else f"{required_solvent*1000.0:.1f} uL"
+                # weight in g / density in g/mL = reagent volume in mL
+                weight = self.concentration * (self.volume / 1000) * (self.what.molecular_weight)
+                reagent_volume = weight / self.what.density
+                required_solvent = self.volume - reagent_volume
+                reagent_volume_string = f"{reagent_volume:.3f} mL" if reagent_volume > 1.0 else f"{reagent_volume*1000.0:.1f} uL"
+                required_solvent_string = f"{required_solvent:.3f} mL" if required_solvent > 1.0 else f"{required_solvent*1000.0:.1f} uL"
 
-            return f"Add {reagent_volume_string} of {self.reagent.name} to {required_solvent_string} of {self.solvent.name}."
+                return f"Add {reagent_volume_string} of {self.name} to {required_solvent_string} of {self.solvent.name}."
+            else:
+                raise ValueError("unknown reagent type")
+        elif isinstance(self.what, StockSolution):
+            # for making stocks by diluting other stocks
+            required_stock_volume = self.concentration * self.volume / self.what.concentration
+            required_solvent_volume = self.volume - required_stock_volume
+            required_stock_volume_string = f"{required_stock_volume:.3f} mL" if required_stock_volume > 1.0 else f"{required_stock_volume*1000.0:.1f} uL"
+            required_solvent_string = f"{required_solvent_volume:.3f} mL" if required_solvent_volume > 1.0 else f"{required_solvent_volume*1000.0:.1f} uL"
+
+            concentration_string = f"{self.what.concentration:.3f} M" if self.what.concentration > 1.0 else f"{self.what.concentration*1000.0} mM"
+            stock_solution_string = f"{concentration_string} of {self.name} in {self.solvent.name}"
+
+            return f"Combine {required_stock_volume_string} of {stock_solution_string} with {required_solvent_string} of {self.solvent.name}."
         else:
-            raise ValueError("unknown reagent type")
+            raise ValueError("unknown type of stock solution!")
 
     def __str__(self):
-        name = self.reagent.name
+        name = self.what.name
         if self.concentration > 0.1:
             return f"{name} ({self.concentration:.2f} M in {self.solvent.name})"
         else:
@@ -309,8 +337,8 @@ class Plate(object):
             else:
                 raise ValueError(f"invalid location in dispense map: *{k}* -> {v}")
 
-                if not isinstance(v,(int,float)) or v <= 0.0:
-                    raise ValueError(f"invalid volume in dispense map {k} -> *{v}*")
+            if not isinstance(v,(int,float)) or v < 0.0:
+                raise ValueError(f"invalid volume in dispense map {k} -> *{v}*")
 
         # convert dispense map locations to canonical locations
         canonical_dispense_map = {}
@@ -547,7 +575,7 @@ class Plate(object):
                     cell_format = workbook.add_format()
                     cell_format.set_bg_color(bg_color)
                     cell_format.set_font_color(font_color)
-                    cell_format.set_num_format('0.0')
+                    cell_format.set_num_format('0.00')
                     worksheet1.write_number(row+1+row_zero,column+1,concentration,cell_format)
             row_zero += self.n_rows + 2
 
