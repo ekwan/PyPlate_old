@@ -255,7 +255,7 @@ class Plate(object):
 
     # converts a location tuple into a canonical form
     #
-    # inputs are assumed to be 2-tuples
+    # inputs are assumed to be 2-tuples or strings that can be converted to 2-tuples
     # components can be row/column labels or 1-indexed locations
     #
     # examples:
@@ -263,8 +263,13 @@ class Plate(object):
     # ("A",1) --> (0,0)
     # ("B","2") --> (1,1)
     def get_canonical_form(self, location):
+        if isinstance(location,str):
+            fields = location.split(":")
+            if len(fields) != 2:
+                raise ValueError(f"malformed location string {location}")
+            location = tuple(fields)
         if not isinstance(location, tuple):
-            raise ValueError("location must be a tuple")
+            raise ValueError(f"location {location} must be a tuple")
         if not len(location) == 2:
             raise ValueError("locations must be tuples of length 2")
 
@@ -343,9 +348,6 @@ class Plate(object):
         # convert dispense map locations to canonical locations
         canonical_dispense_map = {}
         for input_location,volume in dispense_map.items():
-            if isinstance(input_location,str):
-                fields = input_location.split(":")
-                input_location = tuple(fields)
             canonical_location = self.get_canonical_form(input_location)
             #print(input_location, ":", canonical_location)
             if canonical_location in canonical_dispense_map:
@@ -388,6 +390,151 @@ class Plate(object):
             for (row,column),volume in canonical_dispense_map.items():
                 extra_moles = volume * what.concentration  # uL * mol / L = umol
                 self.moles[reagent_index,row,column] += extra_moles
+
+    # add a constant amount of StockSolution or Solvent to specified rectangle
+    # what: StockSolution or Solvent
+    # how_much: volume in uL (same for every well in rectangle)
+    # upper_left: location
+    # bottom_right: location
+    def add_to_block(self, what, how_much, upper_left, bottom_right):
+        upper_left2 = self.get_canonical_form(upper_left)
+        bottom_right2 = self.get_canonical_form(bottom_right)
+
+        # check these positions make sense
+        first_row, first_column = upper_left2[0], upper_left2[1]
+        last_row, last_column = bottom_right2[0], bottom_right2[1]
+        if first_row > last_row or first_column > last_column:
+            raise ValueError(f"invalid block: {upper_left} --> {bottom_right}")
+
+        # construct the dispense map
+        dispense_map = {}
+        for row in range(first_row, last_row+1):
+            for column in range(first_column, last_column+1):
+                location=(row+1,column+1)
+                dispense_map[location] = how_much
+
+        # return result
+        return self.add_custom(what, dispense_map)
+
+    # add a variable amount of stuff to a specified rectangle so as to reach the target voluem
+    def fill_block_up_to_volume(self, what, target_volume, upper_left, bottom_right):
+        if not isinstance(what, (StockSolution,Solvent)):
+            raise ValueError(f"must add StockSolution or Solvent but got {str(type(what))} instead")
+        if target_volume <= 0.0:
+            raise ValueError(f"{target_volume} uL is not a valid target volume")
+        elif target_volume > self.max_volume_per_well:
+            raise ValueError(f"requested total volume {target_volume} exceeds max allowed volume of {self.max_volume_per_well}")
+
+        upper_left2 = self.get_canonical_form(upper_left)
+        bottom_right2 = self.get_canonical_form(bottom_right)
+
+        # check these positions make sense
+        first_row, first_column = upper_left2[0], upper_left2[1]
+        last_row, last_column = bottom_right2[0], bottom_right2[1]
+        if first_row > last_row or first_column > last_column:
+            raise ValueError(f"invalid block: {upper_left} --> {bottom_right}")
+
+        # construct the dispense map
+        dispense_map = {}
+        for row in range(first_row, last_row+1):
+            for column in range(first_column, last_column+1):
+                location=(row,column)
+                current_volume = self.volumes[location]
+                required_volume = target_volume - current_volume
+                location=(row+1,column+1)
+                if required_volume > 0:
+                    dispense_map[location] = required_volume
+                elif required_volume < 0:
+                    raise ValueError(f"negative volume would be needed at {location}")
+
+        # dispense
+        self.add_custom(what, dispense_map)
+
+    # fill a column (or part of a column) with a linear volume gradient
+    # what: StockSolution or Solvent
+    # top_position: (row,column) coordinates of the topmost edge of the column to be filled
+    # bottom_position: (row,column) coordinates of the bottomost edge of the column to be filled
+    # lo_volume: inclusive, in uL 
+    # hi_volume: inclusive, in uL
+    # order: 'forwards' (low volume at top, high volume at bottom) or 'backwards' (high volume at top, low volume at bottom)
+    def add_gradient_to_column(self, what, top_position, bottom_position, lo_volume, hi_volume, order='forwards'):
+        if not isinstance(what, (StockSolution,Solvent)):
+            raise ValueError(f"must add StockSolution or Solvent but got {str(type(what))} instead")
+        top_position2 = self.get_canonical_form(top_position)
+        bottom_position2 = self.get_canonical_form(bottom_position)
+        if top_position2[1] != bottom_position2[1]:
+            raise ValueError(f"positions must belong to same column: {top_position}, {bottom_position}")
+        if top_position2[0] >= bottom_position2[0]:
+            raise ValueError(f"top and bottom positions in wrong order or are the same: {top_position}, {bottom_position}")
+        if lo_volume < 0.0 or hi_volume < 0.0:
+            raise ValueError(f"negative volumes not allowed: {lo_volume} -> {hi_volume}")
+        if hi_volume > self.max_volume_per_well:
+            raise ValueError(f"maximum volume of {hi_volume} exceeds the limit for this plate ({self.max_volume_per_well})")
+        if order != "forwards" and order != "backwards":
+            raise ValueError("unknown iteration order {order}, must be 'forwards' or 'backwards'")
+
+        # construct location and volume lists
+        top = top_position2[0]+1
+        bottom = bottom_position2[0]+1
+        rows = list(range(top,bottom+1))
+        column = top_position2[0]+1
+        columns = [column]*len(rows)
+        if order == 'backwards':
+            rows.reverse()
+        locations = list(zip(rows,columns))
+        volumes = np.linspace(lo_volume, hi_volume, len(rows))
+
+        # construct dispensing map
+        dispense_map = {}
+        for i,location in enumerate(locations):
+            volume = volumes[i]
+            dispense_map[location]=volume
+
+        # dispense
+        self.add_custom(what, dispense_map)
+
+    # fill a row (or part of a row) with a linear volume gradient
+    # what: StockSolution or Solvent
+    # left_position: (row,column) coordinates of the leftmost edge of the area to be filled
+    # right_position: (row,column) coordinates of the rightmost edge of the area to be filled
+    # lo_volume: inclusive, in uL 
+    # hi_volume: inclusive, in uL
+    # order: 'forwards' (low volume on left, high volume on right) or 'backwards' (low volume on right, high volume at left)
+    def add_gradient_to_row(self, what, left_position, right_position, lo_volume, hi_volume, order='forwards'):
+        if not isinstance(what, (StockSolution,Solvent)):
+            raise ValueError(f"must add StockSolution or Solvent but got {str(type(what))} instead")
+        left_position2 = self.get_canonical_form(left_position)
+        right_position2 = self.get_canonical_form(right_position)
+        if left_position2[0] != right_position2[0]:
+            raise ValueError(f"positions must belong to same row: {left_position}, {right_position}")
+        if left_position2[1] >= right_position2[1]:
+            raise ValueError(f"left and right positions in wrong order or are the same: {left_position}, {right_position}")
+        if lo_volume < 0.0 or hi_volume < 0.0:
+            raise ValueError(f"negative volumes not allowed: {lo_volume} -> {hi_volume}")
+        if hi_volume > self.max_volume_per_well:
+            raise ValueError(f"maximum volume of {hi_volume} exceeds the limit for this plate ({self.max_volume_per_well})")
+        if order != "forwards" and order != "backwards":
+            raise ValueError("unknown iteration order {order}, must be 'forwards' or 'backwards'")
+
+        # construct location and volume lists
+        left = left_position2[1]+1
+        right = right_position2[1]+1
+        columns = list(range(left,right+1))
+        row = left_position2[0]+1
+        rows = [row]*len(columns)
+        if order == 'backwards':
+            rows.reverse()
+        locations = list(zip(rows,columns))
+        volumes = np.linspace(lo_volume, hi_volume, len(rows))
+
+        # construct dispensing map
+        dispense_map = {}
+        for i,location in enumerate(locations):
+            volume = volumes[i]
+            dispense_map[location]=volume
+
+        # dispense
+        self.add_custom(what, dispense_map)
 
     # add StockSolution or Solvent to the specified rows
     # what: StockSolution or Solvent
@@ -545,6 +692,7 @@ class Plate(object):
                 cell_format = workbook.add_format()
                 cell_format.set_bg_color(bg_color)
                 cell_format.set_font_color(font_color)
+                cell_format.set_num_format('0.0')
                 if volume > self.max_volume_per_well:
                     cell_format.set_border(5)
                     cell_format.set_border_color("#FF0000")
