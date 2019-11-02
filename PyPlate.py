@@ -523,7 +523,7 @@ class Plate(object):
         row = left_position2[0]+1
         rows = [row]*len(columns)
         if order == 'backwards':
-            rows.reverse()
+            columns.reverse()
         locations = list(zip(rows,columns))
         volumes = np.linspace(lo_volume, hi_volume, len(rows))
 
@@ -723,7 +723,7 @@ class Plate(object):
                     cell_format = workbook.add_format()
                     cell_format.set_bg_color(bg_color)
                     cell_format.set_font_color(font_color)
-                    cell_format.set_num_format('0.00')
+                    cell_format.set_num_format('0.000')
                     worksheet1.write_number(row+1+row_zero,column+1,concentration,cell_format)
             row_zero += self.n_rows + 2
 
