@@ -477,7 +477,7 @@ class Plate(object):
         top = top_position2[0]+1
         bottom = bottom_position2[0]+1
         rows = list(range(top,bottom+1))
-        column = top_position2[0]+1
+        column = top_position2[1]+1
         columns = [column]*len(rows)
         if order == 'backwards':
             rows.reverse()
