@@ -12,11 +12,11 @@ for index, aa in enumerate(amino_acids.keys()):
     catalysts[index] = Reagent.create_solid(f"Ph-{aa}-S-ArF", mw)
 
     #### make stock sol'n using 100 mg catalyst, 5 mL toluene
-    mmol = 100 / mw
-    molarity = mmol/5
-
-    catalyst_solns[index] = StockSolution(catalysts[index], molarity, toluene, volume=5.0)
+    catalyst_solns[index] = StockSolution(catalysts[index], 0.01, toluene, volume=5.0)
     print(catalyst_solns[index])
+
+bzoh = Reagent.create_solid("PhCO2H", 122.12)
+bzoh_soln = StockSolution(bzoh, 0.01, toluene, volume=5.0)
 
 imine1 = Reagent.create_solid("tryptamine-benzaldehyde", 248.33)
 imine2 = Reagent.create_solid("tryptamine-4Fbenzaldehyde", 266.32)
@@ -25,12 +25,15 @@ imine2_soln = StockSolution(imine2, 0.1, toluene, volume=10.0)
 
 plate = Generic96WellPlate("test plate", 500.0)
 
-plate.add_to_rows(what=imine1_soln, how_much=100, rows=[1, 2])
-plate.add_to_rows(what=imine2_soln, how_much=100, rows=[3, 4])
+plate.add_to_block(what=imine1_soln, how_much=50, upper_left='A:1', bottom_right='D:12')
+plate.add_to_block(what=imine2_soln, how_much=50, upper_left='E:1', bottom_right='H:12')
+
+plate.add_to_block(what=bzoh_soln, how_much=10, upper_left='A:1', bottom_right='H:12')
 
 for index, catalyst_soln in enumerate(catalyst_solns):
-    plate.add_to_columns(what=catalyst_soln, how_much=50, columns=[index+1])
+    plate.add_to_columns(what=catalyst_soln, how_much=10, columns=[index+1])
 
+plate.fill_block_up_to_volume(what=toluene, target_volume=100.0, upper_left="A:1", bottom_right="H:12")
 
-filename = "plate.xlsx"
+filename = "ps_plate.xlsx"
 plate.to_excel(filename)
