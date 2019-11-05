@@ -27,7 +27,7 @@
 
 ## Installation
 
-*PyPlate* requires Python 3.7 or later, `numpy`, `matplotlib`, and `xlsxwriter`.  All requirements can be installed by typing:
+*PyPlate* requires Python 3.7 or later, `numpy`, `matplotlib`, and `xlsxwriter` (use of a package manager like `conda` is recommended).  All requirements can be installed by typing:
 
 `pip install -r requirements.txt`
 
