@@ -34,7 +34,7 @@ print()
 
 # create plate
 print("plate:")
-plate = Generic96WellPlate("test plate", 500.0)
+plate = Generic96WellPlate("test plate", max_volume_per_well=500.0)
 print(plate)
 
 # add stuff to the plate
