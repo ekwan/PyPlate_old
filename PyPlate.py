@@ -13,8 +13,10 @@ import xlsxwriter
 # constants
 UPPERCASE_LETTERS = list(ascii_uppercase)
 
-# helper methods
 def is_integer(s):
+    """
+    Helper method to check if variable is integer.
+    """
     try:
         int(s)
         return True
@@ -27,7 +29,15 @@ class ReagentType(Enum):
 
 # represents a chemical that will be added to solvent to make stock solutions
 class Reagent(object):
-    # MW in g/mol, density in g/mL
+    """
+    Represents a chemical that will be added to ``Solvent``to make a ``StockSolution``. 
+    
+    Attributes: 
+        name (str): the chemical's name
+        molecular_weight (float): the molecular weight in g/mol
+        reagent_type (ReagentType): solid or liquid
+        density (float), density in g/mL
+    """
     def __init__(self, name, molecular_weight, reagent_type, density):
         if not isinstance(name, str) or len(name) == 0:
             raise ValueError("invalid reagent name")
@@ -57,16 +67,27 @@ class Reagent(object):
 
     @staticmethod
     def create_solid(name, molecular_weight):
+        """
+        Factory method to create a solid reagent. 
+        """
         return Reagent(name, molecular_weight, ReagentType.SOLID, None)
 
     @staticmethod
     def create_liquid(name, molecular_weight, density):
+        """
+        Factory method to create a liquid reagent.
+        """
         return Reagent(name, molecular_weight, ReagentType.LIQUID, density)
 
-# represents a solvent for stock solutions
 class Solvent(object):
-    # name: name of solvent
-    # volume: volume in mL
+    """
+    Represents a solvent that will be added to ``Reagent`` (or ``StockSolution``) to make a ``StockSolution``. 
+    
+    Attributes:
+        name (str): the name of the solvent
+        volume (float): the volume in mL
+    """
+    
     def __init__(self, name, volume):
         if not isinstance(name, str):
             raise ValueError("solvent name must be string")
@@ -82,12 +103,16 @@ class Solvent(object):
     def __str__(self):
         return f"{self.name} (solvent)"
 
-# represents a solution of a reagent in a solvent
 class StockSolution(object):
-    # what: Reagent or StockSolution
-    # concentration: float in mol/L
-    # solvent: Solvent
-    # volume: float in mL
+    """
+    Represents a solution of a ``Reagent`` in a ``Solvent``.
+    
+    Attributes:
+        what (``Reagent`` or ``StockSolution``): what the stock solution is composed of
+        concentration (mol/L): concentration in mol/L
+        solvent (``Solvent``): the solvent employed
+        volume (float): volume in mL
+    """
     def __init__(self, what, concentration, solvent, volume):
         if not isinstance(what, (Reagent, StockSolution)):
             raise ValueError(f"expected a Reagent or StockSolution but got a {type(what)} instead")
@@ -114,9 +139,10 @@ class StockSolution(object):
             raise ValueError("invalid volume")
         self.volume = float(volume)
 
-    # return a string containing a recipe for this stock solution
-    # volume in mL
     def get_instructions_string(self):
+        """
+        Return a string containing a recipe for this stock solution.
+        """
         if isinstance(self.what, Reagent):
             if self.what.reagent_type == ReagentType.SOLID:
                 # for solids, assume that the added solid contributes zero volume to the solution
@@ -162,13 +188,26 @@ class StockSolution(object):
         else:
             return f"{name} ({self.concentration*1000.0:.1f} mM in {self.solvent.name})"
 
-# represents a generic plate
 class Plate(object):
-    # name: name of plate
-    # make: name of this kind of plate
-    # rows: number of rows or list of names of rows
-    # columns: number of columns or list of names of columns
-    # max_volume_per_well: maximum volume of each well in uL
+    """
+    Represents a generic plate.
+
+    Attributes:
+        name (str): name of plate
+        make (str): name of this kind of plate
+        rows (int or list): number of rows or list of names of rows
+        columns (int or list): number of columns or list of names of columns
+        max_volume_per_well (float): maximum volume of each well in uL
+        reagents (list): list of all reagents used, in the order added
+        moles (list): how many moles of each reagent are in each well (in micromoles, shape:(reagent, rows, columns)). 
+            ordering in axis 0 parallels self.reagents.         
+        instructions (list): list of instructions for making this plate.
+            each instruction is a map from a ``StockSolution`` or ``Solvent`` to a canonical dispense map. 
+            canonical dispense maps are dictionarys from 0-indexed (row,column) tuples to volumes in uL. 
+        volumes_used (OrderedDict): how much of each StockSolution or Solvent was used to make this plate (in uL)
+            map from item --> volume
+
+    """
     def __init__(self, name, make, rows, columns, max_volume_per_well):
         if not isinstance(name, str) or len(name) == 0:
             raise ValueError("invalid plate name")
@@ -253,16 +292,22 @@ class Plate(object):
     def __str__(self):
         return f"{self.name} ({self.make}, {self.n_rows}x{self.n_columns}, max {self.max_volume_per_well:.0f} uL/well)"
 
-    # converts a location tuple into a canonical form
-    #
-    # inputs are assumed to be 2-tuples or strings that can be converted to 2-tuples
-    # components can be row/column labels or 1-indexed locations
-    #
-    # examples:
-    # (0,1) is already in canonical form
-    # ("A",1) --> (0,0)
-    # ("B","2") --> (1,1)
     def get_canonical_form(self, location):
+        """
+        Converts a location tuple into a canonical form.
+        
+        Examples:
+            (0,1) is already in canonical form
+            ("A",1) --> (0,0)
+            ("B","2") --> (1,1)
+        
+        Args: 
+            location: must be a 2-tuple or string that can be converted to a 2-tuple.
+                components can be row/column labels or 1-indexed locations .
+
+        Returns: 
+            a 2-tuple in canonical form
+        """
         if isinstance(location,str):
             fields = location.split(":")
             if len(fields) != 2:
@@ -314,13 +359,16 @@ class Plate(object):
         result = (row,column)
         return result
 
-    # add StockSolution or Solvent to the specified destinations
-    # all other adding methods call this method
-    # what: StockSolution or Solvent
-    # dispense_map: dictionary from location tuples or strings to volumes in uL
-    # examples:
-    # {"D:10":1.0, (5,10):2.0, (5,11):3.0}
     def add_custom(self, what, dispense_map):
+        """
+        Adds ``StockSolution`` or ``Solvent`` to the specified destinations. All other adding methods call this method.
+
+        Args:
+            what: ``StockSolution`` or ``Solvent``
+            dispense_map (dict): dictionary from location tuples or strings to volumes in uL
+                e.g. {"D:10":1.0, (5,10):2.0, (5,11):3.0}
+        """
+    
         # check invariants
         if what is None or not isinstance(what, (StockSolution,Solvent)):
             raise ValueError(f"expected a StockSolution or Solvent, but got a {str(type(what))} instead")
@@ -391,15 +439,19 @@ class Plate(object):
                 extra_moles = volume * what.concentration  # uL * mol / L = umol
                 self.moles[reagent_index,row,column] += extra_moles
 
-    # add a constant amount of StockSolution or Solvent to specified rectangle
-    # what: StockSolution or Solvent
-    # how_much: volume in uL (same for every well in rectangle)
-    # upper_left: location
-    # bottom_right: location
     def add_to_block(self, what, how_much, upper_left, bottom_right):
+        """
+        Adds constant amount of ``StockSolution`` or ``Solvent`` to the specified rectangle. 
+
+        Args:
+            what: ``StockSolution`` or ``Solvent``
+            how_much (float): volume in uL (same for every well in rectangle)
+            upper_left: location
+            bottom_right: location
+        """
         upper_left2 = self.get_canonical_form(upper_left)
         bottom_right2 = self.get_canonical_form(bottom_right)
-
+        
         # check these positions make sense
         first_row, first_column = upper_left2[0], upper_left2[1]
         last_row, last_column = bottom_right2[0], bottom_right2[1]
@@ -416,8 +468,16 @@ class Plate(object):
         # return result
         return self.add_custom(what, dispense_map)
 
-    # add a variable amount of stuff to a specified rectangle so as to reach the target voluem
     def fill_block_up_to_volume(self, what, target_volume, upper_left, bottom_right):
+        """
+        Adds variable amount of ``StockSolution`` or ``Solvent`` to the specified rectangle, so as to reach the target volume in each well. 
+
+        Args:
+            what: ``StockSolution`` or ``Solvent``
+            target_volume (float): volume in uL to fill each well up to
+            upper_left: location
+            bottom_right: location
+        """
         if not isinstance(what, (StockSolution,Solvent)):
             raise ValueError(f"must add StockSolution or Solvent but got {str(type(what))} instead")
         if target_volume <= 0.0:
@@ -450,14 +510,18 @@ class Plate(object):
         # dispense
         self.add_custom(what, dispense_map)
 
-    # fill a column (or part of a column) with a linear volume gradient
-    # what: StockSolution or Solvent
-    # top_position: (row,column) coordinates of the topmost edge of the column to be filled
-    # bottom_position: (row,column) coordinates of the bottomost edge of the column to be filled
-    # lo_volume: inclusive, in uL 
-    # hi_volume: inclusive, in uL
-    # order: 'forwards' (low volume at top, high volume at bottom) or 'backwards' (high volume at top, low volume at bottom)
     def add_gradient_to_column(self, what, top_position, bottom_position, lo_volume, hi_volume, order='forwards'):
+        """
+        Adds variable amount of ``StockSolution`` or ``Solvent`` to the specified column with a linear volume gradient.
+
+        Args:
+            what: ``StockSolution`` or ``Solvent``
+            top_position: location corresponding to the topmost edge of the column to be filled
+            bottom_position: location corresponding to the bottommost edge of the column to be filled
+            lo_volume (float): inclusive, in uL
+            hi_volume (float): inclusive, in uL
+            order: ``forwards`` (low volume at top, high volume at bottom) or ``backwards`` (high volume at top, low volume at bottom)
+        """
         if not isinstance(what, (StockSolution,Solvent)):
             raise ValueError(f"must add StockSolution or Solvent but got {str(type(what))} instead")
         top_position2 = self.get_canonical_form(top_position)
@@ -493,14 +557,21 @@ class Plate(object):
         # dispense
         self.add_custom(what, dispense_map)
 
-    # fill a row (or part of a row) with a linear volume gradient
-    # what: StockSolution or Solvent
-    # left_position: (row,column) coordinates of the leftmost edge of the area to be filled
-    # right_position: (row,column) coordinates of the rightmost edge of the area to be filled
-    # lo_volume: inclusive, in uL 
-    # hi_volume: inclusive, in uL
-    # order: 'forwards' (low volume on left, high volume on right) or 'backwards' (low volume on right, high volume at left)
     def add_gradient_to_row(self, what, left_position, right_position, lo_volume, hi_volume, order='forwards'):
+        """
+        Adds variable amount of ``StockSolution`` or ``Solvent`` to the specified row with a linear volume gradient.
+
+        Args:
+            what: ``StockSolution`` or ``Solvent``
+            left_position: location corresponding to the leftmost edge of the column to be filled
+            right_position: location corresponding to the rightmost edge of the column to be filled
+            lo_volume (float): inclusive, in uL
+            hi_volume (float): inclusive, in uL
+            order: ``forwards`` (low volume at left, high volume at right) or ``backwards`` (high volume at lew, low volume at right)
+        """
+        if not isinstance(what, (StockSolution,Solvent)):
+            raise ValueError(f"must add StockSolution or Solvent but got {str(type(what))} instead")
+        top_position2 = self.get_canonical_form(top_position)
         if not isinstance(what, (StockSolution,Solvent)):
             raise ValueError(f"must add StockSolution or Solvent but got {str(type(what))} instead")
         left_position2 = self.get_canonical_form(left_position)
@@ -541,6 +612,15 @@ class Plate(object):
     # how_much: volume in uL (same for every row)
     # rows: 1, "B", or [1, 2, "C"] (no duplicates allowed, 1-indexed)
     def add_to_rows(self, what, how_much, rows):
+        """
+        Adds ``StockSolution`` or ``Solvent`` to the specified rows. 
+
+        Args:
+            what: ``StockSolution`` or ``Solvent``
+            how_much (float): volume in uL (same for every row)
+            rows: which rows to add to. 
+                various formats ok: 1, "B", or [1, 2, "C"] (no duplicates allowed, 1-indexed)
+        """
         if not isinstance(what, (StockSolution,Solvent)):
             raise ValueError(f"must add StockSolution or Solvent but got {str(type(what))} instead")
         if not isinstance(how_much, (float,int)) or how_much <= 0.0:
@@ -589,12 +669,16 @@ class Plate(object):
             raise ValueError(f"unexpected input for destination: {rows}")
         self.add_custom(what, dispense_map)
 
-    # add StockSolution or Solvent to the specified columns
-    # what: StockSolution or Solvent
-    # how_much: volume in uL (same for every column)
-    # columns: 1, "B", or [1, 2, "C"] (no duplicates allowed, 1-indexed)
-    # add StockSolution or Solvent to the specified columns
     def add_to_columns(self, what, how_much, columns):
+        """
+        Adds ``StockSolution`` or ``Solvent`` to the specified columns. 
+
+        Args:
+            what: ``StockSolution`` or ``Solvent``
+            how_much (float): volume in uL (same for every row)
+            columns: which columns to add to. 
+                various formats ok: 1, "B", or [1, 2, "C"] (no duplicates allowed, 1-indexed)
+        """
         if not isinstance(what, (StockSolution,Solvent)):
             raise ValueError(f"must add StockSolution or Solvent but got {str(type(what))} instead")
         if not isinstance(how_much, (float,int)) or how_much <= 0.0:
@@ -643,8 +727,15 @@ class Plate(object):
             raise ValueError(f"unexpected input for destination: {columns}")
         self.add_custom(what, dispense_map)
 
-    # create an Excel spreadsheet summarizing this plate
     def to_excel(self, filename, colormap='plasma', do_not_overwrite=False):
+    """ 
+    Creates an Excel spreadsheet summarizing this plate.
+
+    Args: 
+        filename (str): the file to write to
+        colormap (str): matplotlib colormap to represent numerical values
+        do_not_overwrite (Bool): if existing file should be overwritten or not
+    """
         # delete file if it exists
         print(f"Writing plate to {filename}...", end='')
         if os.path.exists(filename):
@@ -794,16 +885,20 @@ class Plate(object):
         workbook.close()
         print("done.")
 
-# represents a 96 well plate
 class Generic96WellPlate(Plate):
+    """
+    Represents a 96 well plate.
+    """
     def __init__(self, name, max_volume_per_well):
         make = "generic 96 well plate"
         rows = UPPERCASE_LETTERS[:8]
         columns = 12
         super().__init__(name, make, rows, columns, max_volume_per_well)
 
-# represents a 384 well plate
 class Generic384WellPlate(Plate):
+    """
+    Represents a 384 well plate.
+    """
     def __init__(self, name, max_volume_per_well):
         make = "generic 384 well plate"
         rows = UPPERCASE_LETTERS[:16]
