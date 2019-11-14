@@ -150,7 +150,7 @@ filename = "test.xlsx"
 plate.to_excel(filename)
 ```
 
-The first tab will contain the total volume and individual reagent concentrations in each well.  The second tab will contain a set of instructions for how to prepare each stock solution, as well as a summary of how much of each stock will be used.  (Note that these volume summaries only include the volumes used during dispensing.  If one stock solution is being used to create another via dilution, this volume is *not* accounted for.)  The third tab contains color-coded instructions on how to dispense the liquids to the plate.  The order here is precisely the order that was used to construct the plate object.  Thus, you can be creative here to create dispensing orders that are particularly convenient.
+The first tab will contain the total volume and individual reagent concentrations in each well.  The second tab will contain a set of instructions for how to prepare each stock solution, as well as a summary of how much of each stock will be used.  The third tab contains color-coded instructions on how to dispense the liquids to the plate.  The order here is precisely the order that was used to construct the plate object.  Thus, you can be creative here to create dispensing orders that are particularly convenient.
 
 Every tab uses a perceptually-uniform colormap (`plasma`).  You can choose other `matplotlib` colormaps by changing the default keyword argument `colormap='plasma'` in your call to `to_excel`.
 

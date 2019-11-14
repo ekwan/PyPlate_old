@@ -234,12 +234,25 @@ class StockSolution(object):
         else:
             raise ValueError("unknown type of stock solution!")
 
+    def get_reagent_name(self):
+        if isinstance(self.what, Reagent):
+            return self.what.name
+        else:
+            return self.what.get_reagent_name()
+
     def __str__(self):
-        name = self.what.name
+        # resolve reagent name
+        name = self.get_reagent_name()
         if self.concentration > 0.1:
             return f"{name} ({self.concentration:.2f} M in {self.solvent.name})"
         else:
             return f"{name} ({self.concentration*1000.0:.1f} mM in {self.solvent.name})"
+
+    def _get_sort_string(self):
+        name = self.get_reagent_name()
+        solvent = self.solvent.name
+        concentration = self.concentration
+        return f"{name} {solvent} {concentration}"
 
 
 class Plate(object):
@@ -258,9 +271,10 @@ class Plate(object):
         instructions (list): list of instructions for making this plate.
             each instruction is a map from a ``StockSolution`` or ``Solvent`` to a canonical dispense map.
             canonical dispense maps are dictionarys from 0-indexed (row,column) tuples to volumes in uL.
-        volumes_used (OrderedDict): how much of each StockSolution or Solvent was used to make this plate (in uL)
+        volumes_used (OrderedDict): how much of each StockSolution or Solvent was dispensed to make this plate (in uL)
             map from item --> volume
-
+        extra_stocks (OrderedDict): how much of each StockSolution that was needed to prepare other StockSolutions
+            map from item --> volume
     """
 
     def __init__(self, name, make, rows, columns, max_volume_per_well):
@@ -352,8 +366,9 @@ class Plate(object):
         # map from item --> volume
         self.volumes_used = OrderedDict()
 
-        # stock solutions that are needed to prepare other stock solutions here
-        self.extra_stocks = []
+        # information about stock solutions that are needed to prepare other stock solutions
+        # map from stock solutions to volumes needed
+        self.extra_stocks = {}
 
     def __str__(self):
         return f"{self.name} ({self.make}, {self.n_rows}x{self.n_columns}, max {self.max_volume_per_well:.0f} uL/well)"
@@ -864,45 +879,50 @@ class Plate(object):
             raise ValueError(f"unexpected input for destination: {columns}")
         self.add_custom(what, dispense_map)
 
-    @staticmethod
-    def _get_dependent_stocks(stock, return_set=None):
+    def _get_dependent_stocks(self, stock):
         """
-            Recursively determines which stock solutions this stock solution
-            has been made from.  Returns an empty set if this stock has not
-            been made from other stock solutions.
+            Examines the specified StockSolution to see if it has been made
+            from other StockSolutions.  If so, the amount needed to make the
+            current StockSolution is updated in self.extra stocks and this
+            method is called recursively to examine any dependent stocks.
 
             Args:
                 stock: ``StockSolution``
-                return_set: where to put the results
 
             Returns:
-                set of all dependent stock solutions
+                None
         """
-        if return_set is None:
-            return_set = set()
-        return_set.add(stock)
+        if not isinstance(stock, StockSolution):
+            raise ValueError(f"expected a StockSolution but got {type(stock)} instead")
         if isinstance(stock.what, StockSolution):
-            Plate._get_dependent_stocks(stock.what, return_set)
-        return return_set
+            # volume in mL
+            volume_needed = (
+                stock.concentration * stock.volume / stock.what.concentration
+            )
+            if stock.what in self.extra_stocks:
+                self.extra_stocks[stock.what] += volume_needed
+            else:
+                self.extra_stocks[stock.what] = volume_needed
+            self._get_dependent_stocks(stock.what)
 
     def _register_extra_stocks(self):
         """
             After dispensing, ensure that we print instructions for how to make all the
             intermediate stock solutions.
-        """
-        extra_stock_set = set()
-        for stock in self.volumes_used:
-            what = stock.what
-            if isinstance(what, StockSolution):
-                dependent_stocks = Plate._get_dependent_stocks(what)
-                if len(dependent_stocks) > 0:
-                    extra_stock_set = extra_stock_set.union(dependent_stocks)
+            This method should be applied after all dispenses are complete.  The
+            extra_stocks field will be recalculated for every invocation of this
+            method.  That is, this method is intended to be run once, but running
+            it repeatedly will not have any ill effects.
 
-        # add the stocks
-        for stock in extra_stock_set:
-            assert(isinstance(stock, StockSolution))
-            if stock not in self.volumes_used and stock not in self.extra_stocks:
-                self.extra_stocks.append(stock)
+            Returns:
+                None
+        """
+        # reset
+        self.extra_stocks = OrderedDict()
+
+        # recursively find all dependent stocks
+        for stock in self.volumes_used:
+            self._get_dependent_stocks(stock)
 
     def to_excel(self, filename, colormap="plasma", do_not_overwrite=False):
         """
@@ -1002,7 +1022,21 @@ class Plate(object):
                     )
             row_zero += self.n_rows + 2
 
-        # instructions for how to prepare stocks
+        # determine how much of each stock is needed
+        stock_volumes = dict(self.volumes_used)
+        for stock, volume in self.extra_stocks.items():
+            if stock in stock_volumes:
+                stock_volumes[stock] += volume * 1000.0  # convert from mL to uL
+            else:
+                stock_volumes[stock] = volume * 1000.0
+
+        # sort this dictionary lexicographically
+        # items() returns (k,v) tuples, so x[0] gets k
+        stock_volumes = OrderedDict(
+            sorted(stock_volumes.items(), key=lambda x: x[0]._get_sort_string())
+        )
+
+        # write instructions for how to prepare stocks
         worksheet2 = workbook.add_worksheet("stocks")
         worksheet2.set_column(0, 0, 30)
         worksheet2.set_column(1, 1, 10)
@@ -1015,13 +1049,7 @@ class Plate(object):
         worksheet2.write(1, 2, "needed (uL)", bold)
         worksheet2.write(1, 3, "instructions", bold)
         row_zero = 2
-        for i, item in enumerate(self.extra_stocks):
-            worksheet2.write(row_zero+i, 0, str(item))
-            worksheet2.write(row_zero+i, 1, item.volume * 1000.0)
-            worksheet2.write(row_zero+i, 2, "intermediate stock")
-            worksheet2.write(row_zero+i, 3, item.get_instructions_string())
-        row_zero = 2+len(self.extra_stocks)
-        for i, (item, required_volume) in enumerate(self.volumes_used.items()):
+        for i, (item, required_volume) in enumerate(stock_volumes.items()):
             worksheet2.write(row_zero + i, 0, str(item))
             available_volume = item.volume * 1000.0
             worksheet2.write(row_zero + i, 1, available_volume)
