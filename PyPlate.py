@@ -108,6 +108,8 @@ class Solvent(object):
     def __str__(self):
         return f"{self.name} (solvent)"
 
+    def _get_sort_string(self):
+        return f"zzz solvent {self.name}"
 
 class StockSolution(object):
     """
@@ -246,13 +248,13 @@ class StockSolution(object):
         if self.concentration > 0.1:
             return f"{name} ({self.concentration:.2f} M in {self.solvent.name})"
         else:
-            return f"{name} ({self.concentration*1000.0:.1f} mM in {self.solvent.name})"
+            return f"{name} ({self.concentration*1000.0:.2f} mM in {self.solvent.name})"
 
     def _get_sort_string(self):
         name = self.get_reagent_name()
         solvent = self.solvent.name
         concentration = self.concentration
-        return f"{name} {solvent} {concentration}"
+        return f"{name} {solvent} {concentration:.12f}"
 
 
 class Plate(object):
@@ -273,7 +275,7 @@ class Plate(object):
             canonical dispense maps are dictionarys from 0-indexed (row,column) tuples to volumes in uL.
         volumes_used (OrderedDict): how much of each StockSolution or Solvent was dispensed to make this plate (in uL)
             map from item --> volume
-        extra_stocks (OrderedDict): how much of each StockSolution that was needed to prepare other StockSolutions
+        extra_volumes (OrderedDict): how much of each StockSolution or Solvent that was needed to prepare other StockSolutions
             map from item --> volume
     """
 
@@ -368,7 +370,7 @@ class Plate(object):
 
         # information about stock solutions that are needed to prepare other stock solutions
         # map from stock solutions to volumes needed
-        self.extra_stocks = {}
+        self.extra_volumes = {}
 
     def __str__(self):
         return f"{self.name} ({self.make}, {self.n_rows}x{self.n_columns}, max {self.max_volume_per_well:.0f} uL/well)"
@@ -895,22 +897,26 @@ class Plate(object):
         if not isinstance(stock, StockSolution):
             raise ValueError(f"expected a StockSolution but got {type(stock)} instead")
         if isinstance(stock.what, StockSolution):
+            # account for the stock being used
             # volume in mL
             volume_needed = (
                 stock.concentration * stock.volume / stock.what.concentration
             )
-            if stock.what in self.extra_stocks:
-                self.extra_stocks[stock.what] += volume_needed
+            if stock.what in self.extra_volumes:
+                self.extra_volumes[stock.what] += volume_needed
             else:
-                self.extra_stocks[stock.what] = volume_needed
+                self.extra_volumes[stock.what] = volume_needed
+
+            # there are more stock solutions beneath this so call recursively
             self._get_dependent_stocks(stock.what)
 
-    def _register_extra_stocks(self):
+    def _register_extra_volumes(self):
         """
             After dispensing, ensure that we print instructions for how to make all the
             intermediate stock solutions.
+
             This method should be applied after all dispenses are complete.  The
-            extra_stocks field will be recalculated for every invocation of this
+            extra_volumes field will be recalculated for every invocation of this
             method.  That is, this method is intended to be run once, but running
             it repeatedly will not have any ill effects.
 
@@ -918,11 +924,12 @@ class Plate(object):
                 None
         """
         # reset
-        self.extra_stocks = OrderedDict()
+        self.extra_volumes = OrderedDict()
 
         # recursively find all dependent stocks
         for stock in self.volumes_used:
-            self._get_dependent_stocks(stock)
+            if isinstance(stock, StockSolution):
+                self._get_dependent_stocks(stock)
 
     def to_excel(self, filename, colormap="plasma", do_not_overwrite=False):
         """
@@ -942,7 +949,7 @@ class Plate(object):
                 os.remove(filename)
 
         # register extra stock solutions
-        self._register_extra_stocks()
+        self._register_extra_volumes()
 
         # helper function
         # value: color based on this number
@@ -1024,11 +1031,11 @@ class Plate(object):
 
         # determine how much of each stock is needed
         stock_volumes = dict(self.volumes_used)
-        for stock, volume in self.extra_stocks.items():
-            if stock in stock_volumes:
-                stock_volumes[stock] += volume * 1000.0  # convert from mL to uL
+        for item, volume in self.extra_volumes.items():
+            if item in stock_volumes:
+                stock_volumes[item] += volume * 1000.0  # convert from mL to uL
             else:
-                stock_volumes[stock] = volume * 1000.0
+                stock_volumes[item] = volume * 1000.0
 
         # sort this dictionary lexicographically
         # items() returns (k,v) tuples, so x[0] gets k

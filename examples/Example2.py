@@ -4,12 +4,12 @@ from PyPlate import Reagent, StockSolution, Solvent, Generic96WellPlate
 
 # define reagents
 cyclosporin = Reagent.create_solid("cyclosporin", molecular_weight=1202.61)
-enk = Reagent.create_solid("Met-enkephalin", molecular_weight=573.67)
+enk = Reagent.create_solid("Leu-enkephalin", molecular_weight=555.62)
 nitrile = Reagent.create_liquid("benzonitrile", molecular_weight=117.15, density = 1.015)
 
 # create solvent
-MeCN = Solvent(volume=20.0, name="acetonitrile")
-water = Solvent(volume=5.0, name="water")
+MeCN = Solvent(volume=10.0, name="acetonitrile")
+water = Solvent(volume=10.0, name="water")
 
 # create stocks
 # concentration in M and volume in mL

@@ -134,10 +134,10 @@ You have a few options for fancier dispensing patterns:
 	
 - `add_gradient_to_row(what, left_position, right_position, lo_volume, hi_volume, order=`forwards`)`
    This is the same but adds to rows.  Analogous requirements apply.
-   
+
 - `add_to_block(what, how_much, upper_left, bottom_right)`
    Adds the same amount of stuff to a rectangular region.
-   
+
 - `fill_block_up_to_volume(what, target_volume, upper_left, bottom_right)`
    Tops up the specified rectangular region so that `target_volume` is reached.  An error will be thrown if a negative volume is required.
 
@@ -155,6 +155,8 @@ The first tab will contain the total volume and individual reagent concentration
 Every tab uses a perceptually-uniform colormap (`plasma`).  You can choose other `matplotlib` colormaps by changing the default keyword argument `colormap='plasma'` in your call to `to_excel`.
 
 Occasionally, you may get a bold red box.  This can occur if you exceed the maximum allowed volume for a well or use more stock than is predicted to be available.
+
+*Note:* The second tab ("stocks") information about how much of each stock solution is required.  The amount in column C includes the amount needed to dispense as well any amount needed to create other stock solutions.  Solvents are also listed in this tab.  However, the volumes listed are the volumes needed for dispensing only.  The volumes do not include any amounts that are required to create stock solutions.
 
 ### Defining Custom Plates
 
